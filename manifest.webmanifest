@@ -1,0 +1,13 @@
+{
+  "name": "חשמלאי שרטט חכם",
+  "short_name": "שרטט חכם",
+  "description": "תוכנית חד-קווית מקצועית ללוחות חשמל",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#15181d",
+  "theme_color": "#15181d",
+  "lang": "he",
+  "dir": "rtl",
+  "icons": []
+}

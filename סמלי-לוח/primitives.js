@@ -1,0 +1,87 @@
+/* =================================================================
+ *  סמלי לוח — פונקציות ציור משותפות
+ * ================================================================= */
+(function (global) {
+  "use strict";
+
+  function L(g, a, b, c, d) { g.beginPath(); g.moveTo(a, b); g.lineTo(c, d); g.stroke(); }
+  function R(g, x, y, w, h) { g.beginPath(); g.rect(x, y, w, h); g.stroke(); }
+  function CIR(g, x, y, r) { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke(); }
+  function ARC(g, x, y, r, a0, a1) { g.beginPath(); g.arc(x, y, r, a0, a1); g.stroke(); }
+  function XX(g, x, y, r) { L(g, x - r, y - r, x + r, y + r); L(g, x - r, y + r, x + r, y - r); }
+  function TT(g, s, x, y, sz) {
+    g.save();
+    g.font = `${sz}px ui-sans-serif, system-ui, "Noto Sans Hebrew", sans-serif`;
+    g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(s, x, y);
+    g.restore();
+  }
+  function lead(g, fromY, toY) { L(g, 0, fromY, 0, toY); }
+  function leads(g, poles, fromY, toY) {
+    const step = poles <= 1 ? 0 : 14 / (poles - 1);
+    const x0 = poles <= 1 ? 0 : -7;
+    for (let i = 0; i < poles; i++) L(g, x0 + i * step, fromY, x0 + i * step, toY);
+  }
+
+  const MCB = {
+    connMark: -14,
+    slashTop: -12,
+    slashBot: -7,
+    boxTop: -6,
+    boxH: 14,
+    tripY: 1,
+  };
+
+  function mcbPoleXs(poles) {
+    const step = poles <= 1 ? 0 : 14 / (poles - 1);
+    const x0 = poles <= 1 ? 0 : -7;
+    const xs = [];
+    for (let i = 0; i < poles; i++) xs.push(x0 + i * step);
+    return { xs, w: poles <= 1 ? 18 : 12 + (poles - 1) * step };
+  }
+
+  function mcbPhaseSlashes(g, xs) {
+    for (const x of xs) L(g, x - 3.5, MCB.slashTop, x + 3.5, MCB.slashBot);
+  }
+
+  function mcbTripUnit(g, w) {
+    L(g, -w / 2 + 3, MCB.tripY, w / 2 - 3, MCB.tripY);
+    ARC(g, 0, MCB.tripY + 3, 3, Math.PI, 0);
+  }
+
+  function mcbBody(g, poles) {
+    const { xs, w } = mcbPoleXs(poles);
+    for (const x of xs) XX(g, x, MCB.connMark, 3);
+    mcbPhaseSlashes(g, xs);
+    R(g, -w / 2, MCB.boxTop, w, MCB.boxH);
+    mcbTripUnit(g, w);
+  }
+
+  function mcbPoles(g, poles) {
+    const { xs } = mcbPoleXs(poles);
+    for (const x of xs) {
+      L(g, x, -20, x, MCB.connMark);
+    }
+    mcbBody(g, poles);
+    lead(g, MCB.boxTop + MCB.boxH, 20);
+  }
+
+  /** גוף מא"ז על ענף — בלי קווים חיצוניים (החיבור מהמבנה) */
+  function mcbPolesOnBus(g, poles) {
+    mcbBody(g, poles);
+  }
+
+  /** גוף סמל על ענף — חותך קווי חיבור חיצוניים (±20) */
+  function drawBranchBody(g, drawFn) {
+    g.save();
+    g.beginPath();
+    g.rect(-32, -14, 64, 24);
+    g.clip();
+    drawFn(g);
+    g.restore();
+  }
+
+  global.PanelDraw = {
+    L, R, CIR, ARC, XX, TT, lead, leads,
+    mcbPoles, mcbPolesOnBus, drawBranchBody, mcbBody,
+  };
+})(typeof window !== "undefined" ? window : globalThis);
