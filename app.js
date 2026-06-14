@@ -555,16 +555,42 @@
     return counts;
   }
 
-  function syncChainSymPositions() {
+  function symPosForSlot(slotKey, chainIdx) {
+    const slot = findSlotByKey(slotKey);
+    const idx = chainIdx || 0;
     const step = BoardSkeleton.chainStep;
+    if (slot) {
+      const firstY = slot.firstSymY != null ? slot.firstSymY : slot.y;
+      if (firstY == null || slot.x == null) return null;
+      return { x: snap(clampX(slot.x)), y: snap(clampY(firstY + idx * step)) };
+    }
+    const inLn = findSkLine("branch-in-" + slotKey);
+    if (!inLn) return null;
+    const firstY = inLn.y2 + BoardSkeleton.SYM_TOP;
+    return { x: snap(clampX(inLn.x1)), y: snap(clampY(firstY + idx * step)) };
+  }
+
+  function syncChainSymPositions() {
+    if (!state.meta.skeletonBuilt) return;
     for (const slot of state.meta.branchSlots || []) {
       const syms = symsOnSlot(slot.slotKey);
-      const firstY = slot.firstSymY != null ? slot.firstSymY : slot.y;
       syms.forEach((sym, i) => {
         sym.chainIdx = i;
-        sym.x = slot.x;
-        sym.y = firstY + i * step;
+        const pos = symPosForSlot(slot.slotKey, i);
+        if (pos) {
+          sym.x = pos.x;
+          sym.y = pos.y;
+        }
       });
+    }
+    for (const el of state.elements) {
+      if (el.t !== "sym" || !el.slotKey) continue;
+      if (findSlotByKey(el.slotKey)) continue;
+      const pos = symPosForSlot(el.slotKey, el.chainIdx);
+      if (pos) {
+        el.x = pos.x;
+        el.y = pos.y;
+      }
     }
   }
 
@@ -670,8 +696,14 @@
     }
 
     const el = newSymElement(symId, slot.x, slot.y);
-    el.x = snap(clampX(slot.x));
-    el.y = snap(clampY(slot.y));
+    const pos = symPosForSlot(slotKey, idx);
+    if (pos) {
+      el.x = pos.x;
+      el.y = pos.y;
+    } else {
+      el.x = snap(clampX(slot.x));
+      el.y = snap(clampY(slot.y));
+    }
     el.slotKey = slotKey;
     el.chainIdx = idx;
     commit(() => {
@@ -953,6 +985,7 @@
       return;
     }
     syncAllBranchSkeletonGeometry();
+    syncChainSymPositions();
     snapFreeLinesToSkeleton();
     render();
   }
@@ -1473,13 +1506,21 @@
 
   function snapSymToBus(el, useHistory) {
     if (!state.meta.skeletonBuilt) return false;
-    const slot = findNearestFreeSlot(el.x, el.y, el.id);
-    if (!slot) {
-      if (el.slotKey && !slotOccupied(el.slotKey, el.id)) return true;
-      toast("אין ענף פנוי על המאס");
-      return false;
-    }
     const apply = () => {
+      if (el.slotKey) {
+        const pos = symPosForSlot(el.slotKey, el.chainIdx);
+        if (pos) {
+          el.x = pos.x;
+          el.y = pos.y;
+          return;
+        }
+      }
+      const slot = findNearestFreeSlot(el.x, el.y, el.id);
+      if (!slot) {
+        if (el.slotKey && !slotOccupied(el.slotKey, el.id)) return;
+        toast("אין ענף פנוי על המאס");
+        return;
+      }
       el.x = snap(clampX(slot.x));
       el.y = snap(clampY(slot.y));
       el.slotKey = slot.slotKey;
@@ -1749,9 +1790,11 @@
     state.meta = s.meta;
     state.elements = s.elements;
     if (!state.elements.some((e) => e.id === state.selectedId)) state.selectedId = null;
+    if (state.meta.skeletonBuilt) syncChainSymPositions();
     afterChange();
   }
   function afterChange() {
+    if (state.meta.skeletonBuilt) syncChainSymPositions();
     save();
     render();
     syncUI();
@@ -2587,8 +2630,10 @@
     branchPointer = null;
     if (symPointer && !symPointer.moved) {
       const el = symPointer.el;
-      if (el.slotKey) snapSymToBus(el, false);
+      if (el.slotKey) syncChainSymPositions();
+      else snapSymToBus(el, false);
       symPointer = null;
+      render();
       return;
     }
     symPointer = null;
