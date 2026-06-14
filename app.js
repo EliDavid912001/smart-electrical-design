@@ -85,6 +85,7 @@
     welcomeScreen: $("welcomeScreen"), welcomeBoardGrid: $("welcomeBoardGrid"),
     welcomeStart: $("welcomeStart"), welcomeContinue: $("welcomeContinue"),
     welcomeBoardHint: $("welcomeBoardHint"),
+    splashScreen: $("splash-screen"), startAppBtn: $("start-app-btn"),
     symEditPanel: $("symEditPanel"), symEditTitle: $("symEditTitle"), symEditName: $("symEditName"),
     symEditClose: $("symEditClose"), symEditDelete: $("symEditDelete"), symEditApply: $("symEditApply"),
     symEditRating: $("symEditRating"),
@@ -2980,6 +2981,13 @@
   }
 
   function wireUI() {
+    if (ui.startAppBtn && ui.splashScreen) {
+      ui.startAppBtn.addEventListener("click", () => {
+        ui.splashScreen.classList.add("hidden");
+        ui.splashScreen.setAttribute("aria-hidden", "true");
+      });
+    }
+
     ui.tools.querySelectorAll(".tool[data-tool]").forEach((btn) => {
       btn.addEventListener("click", () => {
         disarm();
