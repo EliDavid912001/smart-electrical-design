@@ -9,5 +9,18 @@
   "theme_color": "#15181d",
   "lang": "he",
   "dir": "rtl",
-  "icons": []
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
 }
