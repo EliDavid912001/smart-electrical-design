@@ -119,6 +119,90 @@
   let branchPointer = null;
   let terminalPointer = null;
   let symPointer = null;
+  let moduleTapPointer = null;
+  let skLineTapPointer = null;
+  let inputIsTouch = false;
+  let lastModuleTap = { time: 0, sx: 0, sy: 0, slotKey: null };
+  let lastSkLineTap = { time: 0, sx: 0, sy: 0, skId: null };
+  const MODULE_TAP_MS = 450;
+
+  function isCoarsePointer() {
+    return window.matchMedia("(pointer: coarse)").matches || window.matchMedia("(hover: none)").matches;
+  }
+
+  function useModuleTapUX() {
+    return inputIsTouch || isCoarsePointer();
+  }
+
+  function moduleHitPad() {
+    return (useModuleTapUX() || innerWidth <= 768) ? 28 : 16;
+  }
+
+  function beginModuleTap(sx, sy, w, skId, slotKey) {
+    moduleTapPointer = { sx, sy, wx: w.x, wy: w.y, skId, slotKey, moved: false };
+    state.selectedId = null;
+    selectedBranchKey = null;
+    render();
+    syncUI();
+  }
+
+  function finishModuleTap(sx, sy) {
+    const w = s2w(sx, sy);
+    const slotKey = resolveModuleSlotAt(w.x, w.y);
+    if (!slotKey) return false;
+
+    const now = Date.now();
+    const isDouble =
+      lastModuleTap.slotKey === slotKey &&
+      now - lastModuleTap.time <= MODULE_TAP_MS &&
+      Math.hypot(sx - lastModuleTap.sx, sy - lastModuleTap.sy) < 44;
+
+    if (useModuleTapUX() || isDouble) {
+      openModuleOnDblClick(sx, sy, w);
+      lastModuleTap.time = 0;
+      return true;
+    }
+
+    lastModuleTap = { time: now, sx, sy, slotKey };
+    return false;
+  }
+
+  function skLineHitDist(skKind) {
+    const base = (useModuleTapUX() || innerWidth <= 768) ? 30 : 22;
+    return skKind === "entry" ? base + 6 : base;
+  }
+
+  function beginSkLineTap(sx, sy, w, skLine) {
+    skLineTapPointer = {
+      sx, sy, wx: w.x, wy: w.y,
+      skId: skLine.skId,
+      meta: skLineMenuMeta(skLine, sx, sy),
+      moved: false,
+    };
+    state.selectedId = null;
+    selectedBranchKey = null;
+    render();
+    syncUI();
+  }
+
+  function finishSkLineTap(sx, sy) {
+    if (!skLineTapPointer) return false;
+    const meta = skLineTapPointer.meta;
+    const now = Date.now();
+    const isDouble =
+      lastSkLineTap.skId === meta.skId &&
+      now - lastSkLineTap.time <= MODULE_TAP_MS &&
+      Math.hypot(sx - lastSkLineTap.sx, sy - lastSkLineTap.sy) < 44;
+
+    if (useModuleTapUX() || isDouble) {
+      openSkLineClickMenu(meta);
+      lastSkLineTap.time = 0;
+      return true;
+    }
+
+    lastSkLineTap = { time: now, sx, sy, skId: meta.skId };
+    return false;
+  }
   let skPointer = null;
   let branchPlaceSlot = null;
   let branchPlaceChainIdx = 0;
@@ -509,19 +593,20 @@
     modulePopupChainMode = !!(opts && opts.chainMode);
     const syms = symsOnSlot(slotKey);
     const sym = syms[0];
+    const tapHint = useModuleTapUX() ? "הקשה על מודול" : "לחיצה כפולה על מודול";
     if (ui.branchPopupHint) {
       if (modulePopupChainMode && syms.length) {
         ui.branchPopupHint.innerHTML =
-          "<strong>לחיצה כפולה</strong> — הוסף סמל לשרשרת או מחק";
+          "<strong>" + tapHint + "</strong> — הוסף סמל לשרשרת או מחק";
       } else if (!syms.length) {
         ui.branchPopupHint.innerHTML =
-          "מודול ריק · <strong>לחיצה כפולה</strong> — «בחר סמל» או «מחק מודול»";
+          "מודול ריק · «בחר סמל» או «מחק מודול»";
       } else if (syms.length > 1) {
         ui.branchPopupHint.innerHTML =
-          syms.length + " סמלים בשרשרת · <strong>לחיצה כפולה</strong> — החלף / הוסף / מחק";
+          syms.length + " סמלים בשרשרת · החלף / הוסף / מחק";
       } else {
         ui.branchPopupHint.innerHTML =
-          "<strong>לחיצה כפולה</strong> על מודול — «בחר סמל» · «מחק סמלים» · «מחק מודול»";
+          "«בחר סמל» · «מחק סמלים» · «מחק מודול»";
       }
     }
     if (ui.branchAddBtn) {
@@ -704,7 +789,7 @@
     if (skLine && skLine.skKind === "branch" && skLine.slotKey) return skLine.slotKey;
     if (state.meta.skeletonBuilt) {
       const slot = nearestSlot(wx, wy);
-      if (slot && Math.hypot(wx - slot.x, wy - slot.y) <= 36) return slot.slotKey;
+      if (slot && Math.hypot(wx - slot.x, wy - slot.y) <= (isCoarsePointer() ? 48 : 36)) return slot.slotKey;
     }
     return null;
   }
@@ -1053,24 +1138,26 @@
   }
 
   function skeletonLineAt(wx, wy) {
-    let best = null, bestD = 20;
+    let best = null, bestD = Infinity;
     for (let i = state.elements.length - 1; i >= 0; i--) {
       const el = state.elements[i];
       if (el.t !== "line" || !el.skeleton || !el.skId) continue;
       if (el.skKind === "branch") continue;
+      const hit = skLineHitDist(el.skKind);
       const d = distSeg(wx, wy, el.x1, el.y1, el.x2, el.y2);
-      if (d <= bestD) { bestD = d; best = el; }
+      if (d <= hit && d < bestD) { bestD = d; best = el; }
     }
     return best;
   }
 
   function skeletonAnyLineAt(wx, wy) {
-    let best = null, bestD = 22;
+    let best = null, bestD = Infinity;
     for (let i = state.elements.length - 1; i >= 0; i--) {
       const el = state.elements[i];
       if (el.t !== "line" || !el.skeleton || !el.skId) continue;
+      const hit = skLineHitDist(el.skKind);
       const d = distSeg(wx, wy, el.x1, el.y1, el.x2, el.y2);
-      if (d <= bestD) { bestD = d; best = el; }
+      if (d <= hit && d < bestD) { bestD = d; best = el; }
     }
     return best;
   }
@@ -1221,26 +1308,28 @@
   }
 
   function skeletonTerminalAt(wx, wy) {
-    let best = null, bestD = 20;
+    let best = null, bestD = moduleHitPad() + 4;
     for (const el of state.elements) {
       if (el.t !== "dot" || !el.skeleton || !el.terminal || !el.slotKey) continue;
       const d = Math.hypot(wx - el.x, wy - el.y);
-      const hitR = (el.r || 4) + 6;
+      const hitR = (el.r || 4) + (isCoarsePointer() ? 14 : 6);
       if (d <= hitR && d < bestD) { bestD = d; best = el.slotKey; }
     }
     return best;
   }
 
   function skeletonBranchAt(wx, wy) {
+    const pad = moduleHitPad();
+    const linePad = isCoarsePointer() ? 22 : 14;
     for (const el of state.elements) {
       if (el.t === "dot" && el.skeleton && el.skKind === "branch" && el.slotKey && !el.terminal) {
-        if (Math.hypot(wx - el.x, wy - el.y) <= 16) return el.slotKey;
+        if (Math.hypot(wx - el.x, wy - el.y) <= pad) return el.slotKey;
       }
     }
     for (const el of state.elements) {
       if (el.t === "line" && el.skeleton && el.skKind === "branch" && el.slotKey) {
         if (Math.abs(el.x1 - el.x2) < 2 && Math.abs(el.y2 - el.y1) > 8) {
-          if (distSeg(wx, wy, el.x1, el.y1, el.x2, el.y2) <= 14) return el.slotKey;
+          if (distSeg(wx, wy, el.x1, el.y1, el.x2, el.y2) <= linePad) return el.slotKey;
         }
       }
     }
@@ -1283,8 +1372,10 @@
     selectedBranchKey = null;
     selectedFeedLinkKey = linkKey || "entryBus";
     ui.feedPopup.classList.remove("hidden");
-    ui.feedPopup.style.left = clamp(sx, 8, innerWidth - 220) + "px";
-    ui.feedPopup.style.top = clamp(sy, 8, innerHeight - 160) + "px";
+    const popW = 220;
+    const popH = innerWidth <= 768 ? 200 : 160;
+    ui.feedPopup.style.left = clamp(sx, 8, innerWidth - popW - 8) + "px";
+    ui.feedPopup.style.top = clamp(sy, 8, innerHeight - popH - 8) + "px";
     ui.feedPopup.querySelector('[data-feed="top"]').classList.toggle("is-active", state.meta.feedDir !== "bottom");
     ui.feedPopup.querySelector('[data-feed="bottom"]').classList.toggle("is-active", state.meta.feedDir === "bottom");
     updateFeedLinkToggleUi(selectedFeedLinkKey);
@@ -1907,9 +1998,15 @@
     render();
   }
   function paperFit() {
-    const cw = innerWidth, ch = innerHeight, m = 0.04;
-    const s = Math.min((cw * (1 - 2 * m)) / PAPER.W, (ch * (1 - 2 * m)) / PAPER.H);
-    return { s, ox: (cw - PAPER.W * s) / 2, oy: (ch - PAPER.H * s) / 2 };
+    const cw = innerWidth, ch = innerHeight;
+    const mobile = cw <= 768;
+    const topM = mobile ? 0.13 : 0.04;
+    const bottomM = mobile ? 0.2 : 0.04;
+    const sideM = mobile ? 0.05 : 0.04;
+    const aw = cw * (1 - 2 * sideM);
+    const ah = ch * (1 - topM - bottomM);
+    const s = Math.min(aw / PAPER.W, ah / PAPER.H);
+    return { s, ox: (cw - PAPER.W * s) / 2, oy: ch * topM + (ah - PAPER.H * s) / 2 };
   }
   function T() {
     const f = paperFit();
@@ -2337,29 +2434,21 @@
       if (state.meta.skeletonBuilt) {
         const termSlot = skeletonTerminalAt(w.x, w.y);
         if (termSlot) {
-          state.selectedId = null;
-          selectedBranchKey = null;
-          terminalPointer = { slotKey: termSlot, sx, sy, moved: false };
-          render();
-          syncUI();
+          beginModuleTap(sx, sy, w, "branch-out-" + termSlot, termSlot);
           return;
         }
         const skLine = skeletonAnyLineAt(w.x, w.y);
+        if (skLine && skLine.skKind === "branch" && skLine.slotKey) {
+          beginModuleTap(sx, sy, w, skLine.skId, skLine.slotKey);
+          return;
+        }
         if (skLine) {
-          state.selectedId = null;
-          selectedBranchKey = null;
-          beginSkDrag(skLine.skId, w.x, w.y, sx, sy);
-          render();
-          syncUI();
+          beginSkLineTap(sx, sy, w, skLine);
           return;
         }
         const skBranch = skeletonBranchAt(w.x, w.y);
         if (skBranch) {
-          state.selectedId = null;
-          selectedBranchKey = null;
-          beginSkDrag("branch-in-" + skBranch, w.x, w.y, sx, sy);
-          render();
-          syncUI();
+          beginModuleTap(sx, sy, w, "branch-in-" + skBranch, skBranch);
           return;
         }
       }
@@ -2389,6 +2478,30 @@
   function pointerMove(sx, sy) {
     lastPointer.sx = sx;
     lastPointer.sy = sy;
+    if (moduleTapPointer && !moduleTapPointer.moved) {
+      if (Math.hypot(sx - moduleTapPointer.sx, sy - moduleTapPointer.sy) > DRAG_THRESHOLD) {
+        moduleTapPointer.moved = true;
+        beginSkDrag(
+          moduleTapPointer.skId,
+          moduleTapPointer.wx,
+          moduleTapPointer.wy,
+          sx,
+          sy
+        );
+        moduleTapPointer = null;
+      } else {
+        return;
+      }
+    }
+    if (skLineTapPointer && !skLineTapPointer.moved) {
+      if (Math.hypot(sx - skLineTapPointer.sx, sy - skLineTapPointer.sy) > DRAG_THRESHOLD) {
+        const t = skLineTapPointer;
+        skLineTapPointer = null;
+        beginSkDrag(t.skId, t.wx, t.wy, sx, sy);
+      } else {
+        return;
+      }
+    }
     const w = s2w(sx, sy);
     if (draftLine) {
       const end = snapLineEnd(draftLine.x1, draftLine.y1, w.x, w.y);
@@ -2439,6 +2552,21 @@
   }
 
   function pointerUp() {
+    if (moduleTapPointer && !moduleTapPointer.moved) {
+      finishModuleTap(moduleTapPointer.sx, moduleTapPointer.sy);
+      moduleTapPointer = null;
+      skLineTapPointer = null;
+      panning = false;
+      return;
+    }
+    moduleTapPointer = null;
+    if (skLineTapPointer && !skLineTapPointer.moved) {
+      finishSkLineTap(skLineTapPointer.sx, skLineTapPointer.sy);
+      skLineTapPointer = null;
+      panning = false;
+      return;
+    }
+    skLineTapPointer = null;
     if (skDrag) {
       endSkDrag();
       return;
@@ -2502,6 +2630,7 @@
 
   canvas.addEventListener("touchstart", (e) => {
     if (modalOpen()) return;
+    inputIsTouch = true;
     e.preventDefault();
     if (e.touches.length === 2) {
       const p1 = txy(e.touches[0]), p2 = txy(e.touches[1]);
@@ -2544,6 +2673,7 @@
   let mDown = false;
   canvas.addEventListener("mousedown", (e) => {
     if (modalOpen()) return;
+    inputIsTouch = false;
     if (e.button === 1 || e.button === 2) {
       panStart(e.offsetX, e.offsetY);
       mDown = "pan";
@@ -2569,6 +2699,8 @@
   });
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   canvas.addEventListener("dblclick", (e) => {
+    lastModuleTap.time = 0;
+    lastSkLineTap.time = 0;
     const w = s2w(e.offsetX, e.offsetY);
     if (openModuleOnDblClick(e.offsetX, e.offsetY, w)) {
       e.preventDefault();

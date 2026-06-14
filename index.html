@@ -156,7 +156,7 @@
     <span class="plus" aria-hidden="true">
       <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="2"/></svg>
     </span>
-    לחיצה כפולה על מודול — הוסף סמל או מחק · פרטי גיליון למעלה
+    לחיצה/הקשה על מודול — הוסף סמל · פרטי גיליון למעלה
   </button>
 
   <!-- ===================== SHEET INFO MODAL ===================== -->
@@ -251,6 +251,7 @@
       <button type="button" class="lib-close" id="symEditClose" aria-label="סגור">✕</button>
     </div>
     <p class="sym-modal-name" id="symEditName"></p>
+    <div class="sym-edit-body">
     <div id="symEditRating" class="sym-step">
       <div class="row sym-rating-row">
         <label class="field">
@@ -292,6 +293,7 @@
       <input id="sym_desc" placeholder='למשל: מזגן סלון' autocomplete="off" />
     </label>
     <p class="sym-hint">לחיצה כפולה על מודול — בחר סמל · Del למחיקה · Esc לסגירה</p>
+    </div>
     <div class="sym-edit-actions">
       <button type="button" class="btn danger" id="symEditDelete">🗑 מחק</button>
       <button type="button" class="btn primary" id="symEditApply">החל שינויים</button>

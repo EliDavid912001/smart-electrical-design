@@ -304,16 +304,27 @@ body.spacing-panel-open #sheet {
   z-index: 52;
 }
 .sym-edit-panel.hidden { display: none; }
+.sym-edit-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
 .sym-edit-panel .sym-modal-name { padding: 0 14px; margin: 0 0 10px; }
 .sym-edit-panel .field { padding: 0 14px; margin-bottom: 10px; }
 .sym-edit-panel .row { padding: 0 14px; }
+.sym-edit-panel .sym-hint { padding: 0 14px 10px; margin: 0; }
 .sym-edit-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 14px; border-bottom: 1px solid var(--panel-brd); font-size: 14px;
+  flex-shrink: 0;
 }
 .sym-edit-actions {
   display: flex; gap: 8px; padding: 10px 14px 14px;
-  border-top: 1px solid var(--panel-brd); margin-top: auto;
+  border-top: 1px solid var(--panel-brd);
+  flex-shrink: 0;
+  background: rgba(22, 26, 32, 0.98);
 }
 .sym-edit-actions .btn { flex: 1; justify-content: center; }
 .sym-edit-actions .btn.danger { flex: 0 0 auto; }
@@ -389,17 +400,102 @@ body.spacing-panel-open #sheet {
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 /* ---------- Responsive ---------- */
-@media (max-width: 560px) {
-  .brand-name { font-size: 13px; max-width: 38vw; }
-  .tools { top: auto; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 12px);
-           transform: none; flex-direction: row; flex-wrap: wrap;
-           max-width: calc(100vw - 24px); justify-content: center; }
-  .tool-sep { width: 1px; height: auto; margin: 6px 2px; }
-  /* Library becomes a bottom sheet on phones */
-  .library {
-    top: auto; inset-inline: 8px; bottom: calc(max(14px, env(safe-area-inset-bottom)) + 76px);
-    width: auto; max-height: 44vh;
+@media (max-width: 768px) {
+  .topbar {
+    top: max(8px, env(safe-area-inset-top));
+    inset-inline-start: 8px;
+    inset-inline-end: 52px;
+    max-width: none;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 8px;
+    z-index: 25;
   }
+  .brand-name { display: none; }
+  .chip {
+    height: 32px;
+    padding: 0 10px;
+    font-size: 11px;
+    max-width: calc(50vw - 20px);
+  }
+  .actions {
+    top: auto;
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 78px);
+    inset-inline-end: 8px;
+    inset-inline-start: auto;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px;
+    z-index: 25;
+  }
+  .tools {
+    top: auto;
+    bottom: max(12px, env(safe-area-inset-bottom));
+    inset-inline-start: 8px;
+    inset-inline-end: 8px;
+    left: 8px;
+    right: 8px;
+    transform: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: none;
+    z-index: 25;
+  }
+  .tool-sep { width: 1px; height: auto; margin: 6px 2px; }
+  .spacing-panel { width: min(100vw, 300px); }
+  .library {
+    top: auto;
+    inset-inline: 8px;
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 88px);
+    width: auto;
+    max-height: 42vh;
+  }
+  .lib-grid { grid-template-columns: repeat(4, 1fr); }
+  .sym-edit-panel {
+    inset-inline: 8px;
+    width: auto;
+    max-height: min(78vh, calc(100dvh - 110px));
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 88px);
+    top: auto;
+    z-index: 55;
+  }
+  .sym-edit-panel .sym-hint { display: none; }
+  .sym-edit-actions {
+    padding: 12px 14px max(12px, env(safe-area-inset-bottom));
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+  }
+  .sym-edit-actions .btn {
+    min-height: 48px;
+    font-size: 15px;
+  }
+  .sym-edit-actions .btn.primary {
+    flex: 1.4;
+  }
+  .empty-hint {
+    font-size: 13px;
+    padding: 12px 14px;
+    max-width: calc(100vw - 24px);
+    text-align: center;
+    line-height: 1.45;
+  }
+  .feed-popup {
+    max-width: calc(100vw - 16px);
+    z-index: 60;
+  }
+  body > div[style*="text-align: center"] {
+    position: fixed;
+    bottom: max(4px, env(safe-area-inset-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    margin: 0 !important;
+    z-index: 10;
+    background: rgba(21, 24, 29, 0.85);
+    border-radius: 999px;
+    padding: 4px 12px !important;
+  }
+}
+@media (max-width: 560px) {
   .lib-grid { grid-template-columns: repeat(5, 1fr); }
 }
 @media (pointer: fine) { :root { --tap: 42px; } }
