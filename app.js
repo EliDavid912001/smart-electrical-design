@@ -70,6 +70,7 @@
     boardChip: $("boardChip"), boardChipLabel: $("boardChipLabel"),
     sheetInfoBtn: $("sheetInfoBtn"), sheetTitleLabel: $("sheetTitleLabel"),
     spacingBtn: $("spacingBtn"), spacingPanel: $("spacingPanel"), spacingClose: $("spacingClose"),
+    spacingBackdrop: $("spacingBackdrop"),
     spacingNoSkeleton: $("spacingNoSkeleton"), spacingBuildBtn: $("spacingBuildBtn"),
     emptyHint: $("emptyHint"), toast: $("toast"), textInput: $("textInput"),
     sheetModal: $("sheetModal"), s_title: $("s_title"), s_author: $("s_author"),
@@ -316,6 +317,8 @@
     spacingPanelOpen = true;
     ui.spacingPanel.classList.add("is-open");
     ui.spacingPanel.setAttribute("aria-hidden", "false");
+    ui.spacingBackdrop?.classList.add("is-open");
+    ui.spacingBackdrop?.setAttribute("aria-hidden", "false");
     ui.spacingBtn?.classList.add("is-active");
     document.body.classList.add("spacing-panel-open");
     syncUI();
@@ -325,6 +328,8 @@
     spacingPanelOpen = false;
     ui.spacingPanel.classList.remove("is-open");
     ui.spacingPanel.setAttribute("aria-hidden", "true");
+    ui.spacingBackdrop?.classList.remove("is-open");
+    ui.spacingBackdrop?.setAttribute("aria-hidden", "true");
     ui.spacingBtn?.classList.remove("is-active");
     document.body.classList.remove("spacing-panel-open");
     commitSpacingOptsSave();
@@ -3146,6 +3151,7 @@
     ui.sheetInfoBtn.addEventListener("click", openSheetModal);
     ui.spacingBtn?.addEventListener("click", toggleSpacingPanel);
     ui.spacingClose?.addEventListener("click", closeSpacingPanel);
+    ui.spacingBackdrop?.addEventListener("click", closeSpacingPanel);
     ui.spacingBuildBtn?.addEventListener("click", buildSkeletonLines);
     ui.s_save.addEventListener("click", saveSheetInfo);
     ui.s_newProject.addEventListener("click", newProject);
