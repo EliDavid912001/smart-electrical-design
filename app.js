@@ -19,7 +19,7 @@
   }
   const GRID = 20;
   const STORAGE_KEY = "draftsman.sld.v8";
-  const SKELETON_VERSION = 16;
+  const SKELETON_VERSION = 17;
   const MAX_CHAIN = 4;
   const MIN_SCALE = 0.2, MAX_SCALE = 8, HISTORY_LIMIT = 120;
   const DRAG_THRESHOLD = 6;
@@ -64,7 +64,7 @@
   const $ = (id) => document.getElementById(id);
   const ui = {
     tools: $("tools"), rotateBtn: $("rotateBtn"), delBtn: $("delBtn"),
-    undo: $("undoBtn"), redo: $("redoBtn"), exportBtn: $("exportBtn"), printBtn: $("printBtn"),
+    undo: $("undoBtn"), redo: $("redoBtn"), exportBtn: $("exportBtn"), exportPdfBtn: $("exportPdfBtn"), printBtn: $("printBtn"),
     libToggle: $("libToggle"), library: $("library"), libBody: $("libBody"),
     libClose: $("libClose"), libHint: $("libHint"),
     boardChip: $("boardChip"), boardChipLabel: $("boardChipLabel"),
@@ -149,6 +149,11 @@
 
   function finishModuleTap(sx, sy) {
     const w = s2w(sx, sy);
+    const hitSym = symAt(w.x, w.y);
+    if (hitSym && hitSym.slotKey) {
+      openSymEdit(hitSym);
+      return true;
+    }
     const slotKey = resolveModuleSlotAt(w.x, w.y);
     if (!slotKey) return false;
 
@@ -650,6 +655,9 @@
     }
     if (ui.branchClearSymBtn) {
       ui.branchClearSymBtn.classList.toggle("hidden", !syms.length);
+      ui.branchClearSymBtn.textContent = syms.length > 1
+        ? "מחק את כל הסמלים (השאר ענף)"
+        : "מחק סמל (השאר ענף)";
     }
     populateCrossSelect(ui.branchWireCross, getWireCross(wireSkForBranch(slotKey)));
     ui.branchPopup.classList.remove("hidden");
@@ -833,6 +841,11 @@
 
   function openModuleOnDblClick(sx, sy, w) {
     if (!state.meta.skeletonBuilt) return false;
+    const hitSym = symAt(w.x, w.y);
+    if (hitSym && hitSym.slotKey) {
+      openSymEdit(hitSym);
+      return true;
+    }
     const slotKey = resolveModuleSlotAt(w.x, w.y);
     if (!slotKey) return false;
     const chainMode = !!skeletonTerminalAt(w.x, w.y);
@@ -845,6 +858,7 @@
     state.meta.skeletonVersion = SKELETON_VERSION;
     state.elements = state.elements.filter((e) => !e.skeleton);
     state.elements = result.lines.concat(result.dots).concat(state.elements);
+    ensureFeedLinksDefaults();
     pruneStructuralSkOverrides();
     applySkLineOverrides();
     syncAllBranchSkeletonGeometry();
@@ -1017,7 +1031,9 @@
 
   function needsSkeletonRebuild(skId) {
     if (!skId) return false;
-    return skId.startsWith("branch-") || skId.startsWith("bus-");
+    if (skId.startsWith("branch-") || skId.startsWith("bus-")) return true;
+    if (skId.startsWith("entry") || skId.startsWith("feed-link") || skId.startsWith("trunk-")) return true;
+    return false;
   }
 
   function translateSkLine(skId, dx, dy) {
@@ -1035,10 +1051,20 @@
     o.y2 = snap(clampY(o.y2 + dy));
   }
 
+  function ensureFeedLinksDefaults() {
+    if (!state.meta.feedLinks) state.meta.feedLinks = {};
+    const links = state.meta.feedLinks;
+    if (links.entryBus === undefined) links.entryBus = true;
+    const fi = feedFirstRowIndex();
+    const horizKey = "horiz-" + fi;
+    if (links[horizKey] === undefined) links[horizKey] = true;
+  }
+
   function getSkeletonGenerateConfig() {
+    ensureFeedLinksDefaults();
     return {
       feedDir: state.meta.feedDir || "top",
-      branchSlots: state.meta.branchSlots || [],
+      branchSlots: [],
       feedX: state.meta.feedX != null ? state.meta.feedX : null,
       feedEndY: state.meta.feedEndY != null ? state.meta.feedEndY : null,
       feedLinks: state.meta.feedLinks || {},
@@ -1081,42 +1107,9 @@
   }
 
   function finalizeBranchDrag(skId) {
-    const slotKey = branchSlotKeyFromSkId(skId);
-    if (!slotKey || !state.meta.skeletonBuilt) return;
-    const slot = findSlotByKey(slotKey);
-    const rowLayout = state.meta.rowLayout[slot.row];
-    if (!slot || !rowLayout) return;
-
-    const xs = rowBranchXs(slot.row, rowLayout.modules);
-    let targetIdx = slot.branch;
-    let bestD = Infinity;
-    for (let j = 0; j < xs.length; j++) {
-      const d = Math.abs(slot.x - xs[j]);
-      if (d < bestD) { bestD = d; targetIdx = j; }
-    }
-
-    if (targetIdx !== slot.branch) {
-      const keyFrom = BoardSkeleton.slotKey(slot.row, slot.branch);
-      const keyTo = BoardSkeleton.slotKey(slot.row, targetIdx);
-      for (const sym of state.elements) {
-        if (sym.t !== "sym") continue;
-        if (sym.slotKey === keyFrom) sym.slotKey = keyTo;
-        else if (sym.slotKey === keyTo) sym.slotKey = keyFrom;
-      }
-      swapMetaBranchKeys(keyFrom, keyTo, "wireCrossSections");
-      swapMetaBranchKeys(keyFrom, keyTo, "skLineOverrides");
-    }
-
-    const canonicalXs = rowBranchXs(slot.row, rowLayout.modules);
-    if (!state.meta.branchSlots) state.meta.branchSlots = [];
-    for (let j = 0; j < rowLayout.modules; j++) {
-      let hit = state.meta.branchSlots.find((s) => s.row === slot.row && s.branch === j);
-      if (!hit) {
-        hit = { row: slot.row, branch: j, slotKey: BoardSkeleton.slotKey(slot.row, j), x: canonicalXs[j] };
-        state.meta.branchSlots.push(hit);
-      }
-      hit.x = canonicalXs[j];
-    }
+    if (!state.meta.skeletonBuilt) return;
+    ensureFeedLinksDefaults();
+    state.meta.feedEndY = null;
     rebuildSkeleton(false);
     snapFreeLinesToSkeleton();
   }
@@ -1140,7 +1133,6 @@
         state.meta.skeletonOpts = o;
         if (ui.s_stubLen) ui.s_stubLen.value = String(o.stubLen);
       }
-      if (dx) slot.x = snap(clampX(slot.x + dx));
       return;
     }
 
@@ -1148,10 +1140,10 @@
       const slotKey = branchSlotKeyFromSkId(skId);
       const slot = findSlotByKey(slotKey);
       if (!slot) return;
-      if (dx) slot.x = snap(clampX(slot.x + dx));
       if (dy) {
         const cur = state.meta.rowBusY[slot.row] != null ? state.meta.rowBusY[slot.row] : slot.busY;
         state.meta.rowBusY[slot.row] = snap(clampY(cur + dy));
+        if (slot.row === feedFirstRowIndex()) state.meta.feedEndY = null;
       }
       return;
     }
@@ -1162,16 +1154,12 @@
       if (dy) {
         const cur = state.meta.rowBusY[row] != null ? state.meta.rowBusY[row] : (ln ? ln.y1 : 0);
         state.meta.rowBusY[row] = snap(clampY(cur + dy));
+        if (row === feedFirstRowIndex()) state.meta.feedEndY = null;
       }
-      if (dx) {
-        for (const s of state.meta.branchSlots || []) {
-          if (s.row === row) {
-            s.x = snap(clampX(s.x + dx));
-            s.xMin = snap(clampX(s.xMin + dx));
-            s.xMax = snap(clampX(s.xMax + dx));
-          }
-        }
-      }
+    }
+
+    if (skId.startsWith("entry") || skId === "feed-link-entry") {
+      if (dy || dx) state.meta.feedEndY = null;
     }
   }
 
@@ -1291,6 +1279,11 @@
     canvas.style.cursor = "";
     if (finishedSkId && finishedSkId.startsWith("branch-")) {
       finalizeBranchDrag(finishedSkId);
+    } else if (finishedSkId && needsSkeletonRebuild(finishedSkId)) {
+      ensureFeedLinksDefaults();
+      rebuildSkeleton(false);
+      snapFreeLinesToSkeleton();
+      render();
     } else {
       render();
     }
@@ -1537,7 +1530,7 @@
       const syms = symsOnSlot(el.slotKey);
       const slot = findSlotByKey(el.slotKey);
       if (slot && syms[syms.length - 1]?.id === el.id && slot.stubEnd != null) {
-        return { x: snap(el.x), y: snap(slot.stubEnd + 16), size: 11, align: "center" };
+        return { x: snap(el.x), y: snap(slot.stubEnd + 32), size: 12, align: "center" };
       }
     }
     const rowKey = el.slotKey ? el.slotKey.split("-")[0] : null;
@@ -2181,19 +2174,91 @@
     }
   }
 
+  function wtextWithHalo(g, t, s, x, y, size, al, bl, col) {
+    const p = w2s(x, y, t);
+    const fs = size * t.s;
+    g.font = `${fs}px ui-sans-serif, system-ui, "Noto Sans Hebrew", Arial, sans-serif`;
+    g.textAlign = al || "center";
+    g.textBaseline = bl || "middle";
+    g.lineWidth = Math.max(4, 5 * t.s);
+    g.strokeStyle = "#fff";
+    g.strokeText(s, p.x, p.y);
+    g.fillStyle = col || "#111";
+    g.fillText(s, p.x, p.y);
+  }
+
+  function wtextVerticalWithHalo(g, t, s, x, y, size, offsetX, col) {
+    const p = w2s(x, y, t);
+    g.save();
+    g.translate(p.x + (offsetX || -12) * t.s, p.y);
+    g.rotate(-Math.PI / 2);
+    const fs = size * t.s;
+    g.font = `${fs}px ui-sans-serif, system-ui, "Noto Sans Hebrew", Arial, sans-serif`;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.lineWidth = Math.max(4, 5 * t.s);
+    g.strokeStyle = "#fff";
+    g.strokeText(s, 0, 0);
+    g.fillStyle = col || "#333";
+    g.fillText(s, 0, 0);
+    g.restore();
+  }
+
   function drawElements(g, t) {
     g.strokeStyle = "#111"; g.fillStyle = "#111";
     for (const el of state.elements) {
-      if (el.t === "line") drawLineEl(g, t, el);
+      if (el.t === "line" && el.skeleton) drawLineStroke(g, t, el);
     }
     for (const el of state.elements) {
-      if (el.t === "sym") drawSymEl(g, t, el);
+      if (el.t === "line" && !el.skeleton) drawLineStroke(g, t, el);
     }
     for (const el of state.elements) {
       if (el.t === "dot") drawDotEl(g, t, el);
     }
     for (const el of state.elements) {
+      if (el.t === "sym") drawSymBody(g, t, el);
+    }
+    for (const el of state.elements) {
+      if (el.t === "line" && el.skeleton) drawLineLabels(g, t, el);
+    }
+    for (const el of state.elements) {
+      if (el.t === "line" && !el.skeleton) drawLineLabels(g, t, el);
+    }
+    for (const el of state.elements) {
+      if (el.t === "sym") drawSymOverlays(g, t, el);
+    }
+    for (const el of state.elements) {
       if (el.t === "text") drawTextEl(g, t, el);
+    }
+  }
+
+  function drawLineStroke(g, t, el) {
+    g.strokeStyle = "#111";
+    let lw = el.skeleton ? 1.7 : 1.5;
+    if (el.skKind === "entry") lw = 2;
+    if (el.skKind === "branch") lw = 1.9;
+    wline(g, t, el.x1, el.y1, el.x2, el.y2, Math.max(1, lw * t.s));
+  }
+
+  function drawLineLabels(g, t, el) {
+    const cs = wireCrossForLine(el);
+    if (cs == null) return;
+    if (el.skeleton && el.skKind === "branch" && (el.segment === "in" || el.segment === "drop")) {
+      const mx = el.x1;
+      const segH = Math.abs(el.y2 - el.y1);
+      if (Math.abs(el.x1 - el.x2) < 2 && segH >= 14) {
+        const label = branchCrossLabelForLine(el, cs);
+        const my = (el.y1 + el.y2) / 2;
+        wtextWithHalo(g, t, label, mx - 34, my, 11, "end", "middle", "#222");
+      }
+    } else if (el.skeleton && el.skKind !== "branch") {
+      const mx = (el.x1 + el.x2) / 2;
+      const my = (el.y1 + el.y2) / 2;
+      if (Math.abs(el.x1 - el.x2) < 2) {
+        wtextVerticalWithHalo(g, t, cs + "mm", mx, my, 10, -16, "#333");
+      } else {
+        wtextWithHalo(g, t, formatCrossLabel(cs), mx, my - 14, 10, "center", "middle", "#333");
+      }
     }
   }
   function drawBranchSlots(g, t) {
@@ -2219,43 +2284,27 @@
   }
 
   function drawLineEl(g, t, el) {
-    g.strokeStyle = "#111";
-    let lw = el.skeleton ? 1.6 : 1.5;
-    if (el.skKind === "entry") lw = 1.8;
-    wline(g, t, el.x1, el.y1, el.x2, el.y2, Math.max(1, lw * t.s));
-    const cs = wireCrossForLine(el);
-    if (cs != null && el.skeleton && el.skKind === "branch" && (el.segment === "in" || el.segment === "drop")) {
-      const mx = (el.x1 + el.x2) / 2;
-      const segH = Math.abs(el.y2 - el.y1);
-      if (Math.abs(el.x1 - el.x2) < 2 && segH >= 10) {
-        const label = branchCrossLabelForLine(el, cs);
-        const labelY = el.y1 + Math.min(segH * 0.5, Math.max(segH - 8, segH * 0.45));
-        wtextVertical(g, t, label, mx, labelY, 10, -14, "#333");
-      }
-    } else if (cs != null && el.skeleton && el.skKind !== "branch") {
-      const mx = (el.x1 + el.x2) / 2;
-      const my = (el.y1 + el.y2) / 2;
-      if (Math.abs(el.x1 - el.x2) < 2) {
-        wtextVertical(g, t, cs + "mm", mx, my, 10, -14, "#333");
-      } else {
-        wtext(g, t, formatCrossLabel(cs), mx, my - 14, 10, "center", "middle", "#333");
-      }
-    }
+    drawLineStroke(g, t, el);
+    drawLineLabels(g, t, el);
   }
   function drawTextEl(g, t, el) {
     const c = w2s(el.x, el.y, t);
     const rot = el.rot || 0;
     if (!rot) {
-      wtext(g, t, el.val, el.x, el.y, el.size || 16, "start", "middle", "#111");
+      wtextWithHalo(g, t, el.val, el.x, el.y, el.size || 16, "start", "middle", "#111");
       return;
     }
     g.save();
     g.translate(c.x, c.y);
     g.rotate(rot * Math.PI / 180);
-    g.fillStyle = "#111";
-    g.font = `${(el.size || 16) * t.s}px ui-sans-serif, system-ui, "Noto Sans Hebrew", Arial, sans-serif`;
+    const fs = (el.size || 16) * t.s;
+    g.font = `${fs}px ui-sans-serif, system-ui, "Noto Sans Hebrew", Arial, sans-serif`;
     g.textAlign = "start";
     g.textBaseline = "middle";
+    g.lineWidth = Math.max(3, 4 * t.s);
+    g.strokeStyle = "#fff";
+    g.strokeText(el.val, 0, 0);
+    g.fillStyle = "#111";
     g.fillText(el.val, 0, 0);
     g.restore();
   }
@@ -2305,7 +2354,7 @@
     def.draw(g);
   }
 
-  function drawSymEl(g, t, el) {
+  function drawSymBody(g, t, el) {
     const def = SYMBOLS[el.sym];
     if (!def) return;
     const c = w2s(el.x, el.y, t);
@@ -2315,26 +2364,33 @@
     g.scale(t.s, t.s);
     if (el.slotKey) {
       g.fillStyle = "#fff";
-      g.fillRect(-32, -22, 64, 44);
+      g.fillRect(-40, -30, 80, 60);
+      g.strokeStyle = "rgba(0,0,0,0.12)";
+      g.lineWidth = 1.2;
+      g.strokeRect(-40, -30, 80, 60);
     }
     g.strokeStyle = "#111"; g.fillStyle = "#111";
     g.lineWidth = 1.6; g.lineCap = "round"; g.lineJoin = "round";
     drawSymGraphic(g, el, def);
     g.restore();
+  }
 
+  function drawSymOverlays(g, t, el) {
+    const def = SYMBOLS[el.sym];
+    if (!def) return;
     const rating = symRatingLabel(el, def);
     if (rating) {
       if (el.slotKey) {
-        wtext(g, t, rating, el.x - 28, el.y, 12, "end", "middle", "#111");
+        wtextWithHalo(g, t, rating, el.x - 42, el.y, 14, "end", "middle", "#111");
       } else {
-        wtext(g, t, rating, el.x, el.y - 28, 12, "center", "middle", "#111");
+        wtextWithHalo(g, t, rating, el.x, el.y - 28, 12, "center", "middle", "#111");
       }
     }
     const wireCs = el.slotKey
       ? getWireCross(wireSkForChainSym(el.slotKey, el.chainIdx || 0))
       : null;
     if (el.crossSection != null && def.hasRating && wireCs == null && !el.slotKey) {
-      wtext(g, t, formatCrossLabel(el.crossSection), el.x, el.y + 28, 11, "center", "middle", "#333");
+      wtextWithHalo(g, t, formatCrossLabel(el.crossSection), el.x, el.y + 28, 11, "center", "middle", "#333");
     }
     const desc = el.desc || el.label;
     if (desc) {
@@ -2342,9 +2398,14 @@
       const showDesc = !chainSyms || chainSyms[chainSyms.length - 1]?.id === el.id;
       if (showDesc) {
         const layout = el.labelLayout || computeSymLabelLayout(el);
-        wtext(g, t, desc, layout.x, layout.y, layout.size, layout.align, "middle", "#111");
+        wtextWithHalo(g, t, desc, layout.x, layout.y, layout.size, layout.align, "middle", "#111");
       }
     }
+  }
+
+  function drawSymEl(g, t, el) {
+    drawSymBody(g, t, el);
+    drawSymOverlays(g, t, el);
   }
 
   function drawSelection(g, t) {
@@ -2410,16 +2471,29 @@
     return { x2: clampX(best.x2), y2: clampY(best.y2) };
   }
 
+  function symAt(wx, wy) {
+    let best = null, bestD = 36;
+    for (const el of state.elements) {
+      if (el.t !== "sym") continue;
+      const d = Math.hypot(wx - el.x, wy - el.y);
+      if (d < bestD) { bestD = d; best = el; }
+    }
+    return best;
+  }
+
   function elementAt(wx, wy) {
+    const sym = symAt(wx, wy);
+    if (sym) return sym;
     for (let i = state.elements.length - 1; i >= 0; i--) {
       const el = state.elements[i];
-      if (el.t === "sym") {
-        if (Math.abs(wx - el.x) <= 22 && Math.abs(wy - el.y) <= 30) return el;
-      } else if (el.t === "line") {
+      if (el.t === "sym") continue;
+      if (el.t === "line") {
         if (el.skeleton) continue;
         if (distSeg(wx, wy, el.x1, el.y1, el.x2, el.y2) <= 8) return el;
       } else if (el.t === "dot") {
         if (el.skeleton) continue;
+        const r = (el.r || 3.5) + 6;
+        if (Math.hypot(wx - el.x, wy - el.y) <= r) return el;
       } else if (el.t === "text") {
         const b = textHitBounds(el);
         if (Math.abs(wx - el.x) <= b.hw && Math.abs(wy - el.y) <= b.hh) return el;
@@ -2478,6 +2552,15 @@
       hideBranchPopup();
       hideTerminalPopup();
       selectedBranchKey = null;
+
+      const hitSym = symAt(w.x, w.y);
+      if (hitSym && hitSym.slotKey) {
+        state.selectedId = hitSym.id;
+        symPointer = { el: hitSym, sx, sy, moved: false };
+        render();
+        syncUI();
+        return;
+      }
 
       if (state.meta.skeletonBuilt) {
         const termSlot = skeletonTerminalAt(w.x, w.y);
@@ -2629,11 +2712,8 @@
     skPointer = null;
     branchPointer = null;
     if (symPointer && !symPointer.moved) {
-      const el = symPointer.el;
-      if (el.slotKey) syncChainSymPositions();
-      else snapSymToBus(el, false);
+      openSymEdit(symPointer.el);
       symPointer = null;
-      render();
       return;
     }
     symPointer = null;
@@ -2887,13 +2967,22 @@
     state.selectedId = el.id;
     const def = SYMBOLS[el.sym];
     if (ui.symEditName) {
-      ui.symEditName.textContent = def ? def.name + (def.code ? " · " + def.code : "") : el.sym;
+      const chainN = el.slotKey ? symsOnSlot(el.slotKey).length : 0;
+      const chainHint = chainN > 1 ? " · סמל " + ((el.chainIdx || 0) + 1) + "/" + chainN : "";
+      ui.symEditName.textContent = (def ? def.name + (def.code ? " · " + def.code : "") : el.sym) + chainHint;
+    }
+    if (ui.symEditDelete) {
+      ui.symEditDelete.textContent = el.slotKey && symsOnSlot(el.slotKey).length > 1
+        ? "🗑 מחק סמל זה בלבד"
+        : "🗑 מחק";
     }
     refreshSymEditFields();
     ui.symEditPanel.classList.remove("hidden");
     if (showLibrary !== false) ui.library.classList.remove("hidden");
     highlightLibItem(el.sym);
-    ui.libHint.textContent = "לחיצה כפולה על מודול — בחר סמל · Esc לסגירה";
+    ui.libHint.textContent = el.slotKey && symsOnSlot(el.slotKey).length > 1
+      ? "לחץ על סמל — עריכה / מחיקה בודדת · «מחק סמל זה בלבד»"
+      : "לחיצה על מודול — בחר סמל · Esc לסגירה";
     syncUI();
     render();
   }
@@ -2965,6 +3054,7 @@
     if (!symEditEl) return;
     const id = symEditEl.id;
     const slotKey = symEditEl.slotKey;
+    const chainCount = slotKey ? symsOnSlot(slotKey).length : 0;
     commit(() => {
       state.elements = state.elements.filter((e) => e.id !== id);
       if (slotKey && state.meta.skeletonBuilt) {
@@ -2977,12 +3067,13 @@
           getSkeletonGenerateConfig()
         );
         applySkeletonResult(result);
+        syncWireCrossFromSymbols();
       }
     });
     state.selectedId = null;
     closeSymEdit();
     checkModuleOverflow(true);
-    toast("רכיב נמחק");
+    toast(chainCount > 1 ? "סמל הוסר מהשרשרת — האחרים נשארו" : "רכיב נמחק");
   }
 
   function selected() { return state.elements.find((e) => e.id === state.selectedId); }
@@ -3093,6 +3184,30 @@
     drawSheet(g, { s: scale, ox: 0, oy: 0 }, { grid: false });
     return off;
   }
+  function exportPDF() {
+    if (!state.elements.length) { toast("הגיליון ריק"); return; }
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+      toast("טוען PDF…");
+      printSheet();
+      return;
+    }
+    try {
+      const img = renderToImage(2);
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({
+        orientation: PAPER.W > PAPER.H ? "landscape" : "portrait",
+        unit: "pt",
+        format: [PAPER.W * 0.75, PAPER.H * 0.75],
+      });
+      pdf.addImage(img.toDataURL("image/png"), "PNG", 0, 0, PAPER.W * 0.75, PAPER.H * 0.75);
+      pdf.save((state.meta.title || "sld").replace(/\s+/g, "_") + ".pdf");
+      toast("PDF הורד");
+    } catch (e) {
+      toast("שגיאה בייצוא PDF — נסה הדפסה");
+      printSheet();
+    }
+  }
+
   function exportPNG() {
     if (!state.elements.length) { toast("הגיליון ריק"); return; }
     renderToImage(2).toBlob((blob) => {
@@ -3183,6 +3298,7 @@
     ui.undo.addEventListener("click", undo);
     ui.redo.addEventListener("click", redo);
     ui.exportBtn.addEventListener("click", exportPNG);
+    ui.exportPdfBtn?.addEventListener("click", exportPDF);
     ui.printBtn.addEventListener("click", printSheet);
 
     ui.libToggle?.addEventListener("click", () => { ui.library.classList.toggle("hidden"); syncUI(); });

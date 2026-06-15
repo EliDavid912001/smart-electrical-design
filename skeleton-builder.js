@@ -7,9 +7,9 @@
   const ROW_TOP = 80;
   const ROW_BOTTOM_PAD = 64;
   const DEFAULT_STUB = 100;
-  const SYM_BOTTOM = 20;
-  const SYM_TOP = 20;
-  const LINK_DROP = 28;
+  const SYM_BOTTOM = 22;
+  const SYM_TOP = 22;
+  const LINK_DROP = 40;
   const BRANCH_EXTRA = 20;
   const chainStep = SYM_TOP + LINK_DROP + SYM_BOTTOM;
   const MIN_STUB = SYM_BOTTOM + SYM_TOP + BRANCH_EXTRA + 8;

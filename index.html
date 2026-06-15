@@ -112,7 +112,10 @@
     <button class="icon-btn" id="exportBtn" title="ייצוא PNG" aria-label="ייצוא תמונה">
       <svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
     </button>
-    <button class="icon-btn" id="printBtn" title="הדפסה / PDF" aria-label="הדפסה">
+    <button class="icon-btn" id="exportPdfBtn" title="הורד PDF" aria-label="ייצוא PDF">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg>
+    </button>
+    <button class="icon-btn" id="printBtn" title="הדפסה" aria-label="הדפסה">
       <svg viewBox="0 0 24 24"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M6 14h12v7H6z"/></svg>
     </button>
   </div>
@@ -235,7 +238,7 @@
       <label class="range-field">
         <span>מרווח בין מודולים <b id="s_widthPctVal">120%</b></span>
         <input type="range" id="s_widthPct" min="80" max="200" value="120" />
-        <small>גבוה = יותר אוויר אופקי בין מודולים</small>
+        <small>נקבע ב«בנה מבנה קווים» — לא ניתן לגרור מודולים אופקית</small>
       </label>
       <label class="range-field">
         <span>אורך המודול <b id="s_stubLenVal">100px</b></span>
@@ -293,7 +296,7 @@
       <span>שם המעגל</span>
       <input id="sym_desc" placeholder='למשל: מזגן סלון' autocomplete="off" />
     </label>
-    <p class="sym-hint">לחיצה כפולה על מודול — בחר סמל · Del למחיקה · Esc לסגירה</p>
+    <p class="sym-hint">לחץ על סמל — עריכה · «מחק סמל זה בלבד» — מחיקה בודדת בשרשרת</p>
     </div>
     <div class="sym-edit-actions">
       <button type="button" class="btn danger" id="symEditDelete">🗑 מחק</button>
@@ -325,7 +328,7 @@
     </label>
     <button type="button" id="branchAddBtn">בחר סמל מהרשימה</button>
     <button type="button" id="branchChainBtn" class="hidden">הוסף סמל לשרשרת</button>
-    <button type="button" class="danger-text" id="branchClearSymBtn">מחק סמלים (השאר ענף)</button>
+    <button type="button" class="danger-text" id="branchClearSymBtn">מחק סמל (השאר ענף)</button>
     <button type="button" class="danger-text" id="branchDeleteBtn">מחק מודול מהלוח</button>
   </div>
 
@@ -349,6 +352,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="conductor.js"></script>
   <script src="board-config.js"></script>
   <script src="skeleton-builder.js"></script>
