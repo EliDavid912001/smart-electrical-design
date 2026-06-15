@@ -7,9 +7,9 @@
   const ROW_TOP = 80;
   const ROW_BOTTOM_PAD = 64;
   const DEFAULT_STUB = 100;
-  const SYM_BOTTOM = 22;
-  const SYM_TOP = 22;
-  const LINK_DROP = 40;
+  const SYM_BOTTOM = 26;
+  const SYM_TOP = 26;
+  const LINK_DROP = 52;
   const BRANCH_EXTRA = 20;
   const chainStep = SYM_TOP + LINK_DROP + SYM_BOTTOM;
   const MIN_STUB = SYM_BOTTOM + SYM_TOP + BRANCH_EXTRA + 8;
@@ -37,7 +37,7 @@
   function normalizeOpts(opts) {
     const o = opts || {};
     return {
-      widthPct: clamp(Number(o.widthPct) || 120, 80, 200),
+      widthPct: clamp(Number(o.widthPct) || 140, 80, 200),
       rowGapPct: clamp(Number(o.rowGapPct) || 100, 50, 120),
       stubLen: clamp(Number(o.stubLen) || DEFAULT_STUB, 56, 220),
     };
@@ -53,7 +53,7 @@
   }
 
   function calcSpacing(maxModules, area, widthPct) {
-    const scale = (Number(widthPct) || 120) / 100;
+    const scale = (Number(widthPct) || 140) / 100;
     return snapX(Math.max(MIN_SPACING, FIXED_BRANCH_SPACING * scale));
   }
 
@@ -285,7 +285,7 @@
   }
 
   function defaultOpts() {
-    return { widthPct: 120, rowGapPct: 100, stubLen: DEFAULT_STUB };
+    return { widthPct: 140, rowGapPct: 100, stubLen: DEFAULT_STUB };
   }
 
   global.BoardSkeleton = {

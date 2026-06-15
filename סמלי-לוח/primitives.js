@@ -74,7 +74,7 @@
   function drawBranchBody(g, drawFn) {
     g.save();
     g.beginPath();
-    g.rect(-32, -14, 64, 24);
+    g.rect(-28, -12, 56, 22);
     g.clip();
     drawFn(g);
     g.restore();
