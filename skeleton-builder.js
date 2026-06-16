@@ -10,7 +10,7 @@
   const SYM_BOTTOM = 26;
   const SYM_TOP = 26;
   const LINK_DROP = 52;
-  const BRANCH_EXTRA = 20;
+  const BRANCH_EXTRA = 34;
   const chainStep = SYM_TOP + LINK_DROP + SYM_BOTTOM;
   const MIN_STUB = SYM_BOTTOM + SYM_TOP + BRANCH_EXTRA + 8;
   const SIDE_MARGIN = 72;
