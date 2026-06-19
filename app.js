@@ -19,7 +19,7 @@
   }
   const GRID = 20;
   const STORAGE_KEY = "draftsman.sld.v8";
-  const SKELETON_VERSION = 19;
+  const SKELETON_VERSION = 20;
   const MAX_CHAIN = 4;
   const MIN_SCALE = 0.2, MAX_SCALE = 8, HISTORY_LIMIT = 120;
   const DRAG_THRESHOLD = 6;
@@ -64,14 +64,12 @@
   const ctx = canvas.getContext("2d");
   const $ = (id) => document.getElementById(id);
   const ui = {
-    tools: $("tools"), rotateBtn: $("rotateBtn"), delBtn: $("delBtn"),
+    tools: $("tools"), rotateBtn: $("rotateBtn"), delBtn: $("delBtn"), fitViewBtn: $("fitViewBtn"),
     undo: $("undoBtn"), redo: $("redoBtn"), exportBtn: $("exportBtn"), exportPdfBtn: $("exportPdfBtn"), printBtn: $("printBtn"),
     libToggle: $("libToggle"), library: $("library"), libBody: $("libBody"),
     libClose: $("libClose"), libHint: $("libHint"),
     boardChip: $("boardChip"), boardChipLabel: $("boardChipLabel"),
-    moduleDashboard: $("moduleDashboard"), moduleTrack: $("moduleTrack"),
     moduleCountUsed: $("moduleCountUsed"), moduleCountTotal: $("moduleCountTotal"),
-    moduleBoardTitle: $("moduleBoardTitle"), moduleBoardSub: $("moduleBoardSub"),
     sheetInfoBtn: $("sheetInfoBtn"), sheetTitleLabel: $("sheetTitleLabel"),
     spacingBtn: $("spacingBtn"), spacingPanel: $("spacingPanel"), spacingClose: $("spacingClose"),
     spacingBackdrop: $("spacingBackdrop"),
@@ -271,7 +269,7 @@
       const M = row.modules;
       if (!M) return;
       const spacing = branchSpacingForRow(M);
-      const xs = BoardSkeleton.centeredBranchXs(centerX, spacing, M);
+      const xs = BoardSkeleton.centeredBranchXs(centerX, spacing, M, area);
       for (let j = 0; j < M; j++) {
         const sk = BoardSkeleton.slotKey(ri, j);
         let hit = state.meta.branchSlots.find((s) => s.row === ri && s.branch === j);
@@ -292,7 +290,8 @@
 
   function applySpacingOptsLive() {
     syncSkeletonOptsLabels();
-    if (!state.meta.skeletonBuilt) return;
+    state.meta.skeletonOpts = readSkeletonOptsFromUI();
+    if (!state.meta.skeletonBuilt || !hasSkeletonLines()) return;
     const prev = state.meta.skeletonOpts || BoardSkeleton.defaultOpts();
     const next = readSkeletonOptsFromUI();
     state.meta.skeletonOpts = next;
@@ -305,18 +304,25 @@
   }
 
   function commitSpacingOptsSave() {
-    if (!state.meta.skeletonBuilt) return;
+    if (!state.meta.skeletonBuilt || !hasSkeletonLines()) return;
     state.meta.skeletonOpts = readSkeletonOptsFromUI();
     save();
   }
 
   function syncSpacingPanelState() {
-    const built = !!state.meta.skeletonBuilt;
+    const built = !!state.meta.skeletonBuilt && hasSkeletonLines();
+    if (state.meta.skeletonBuilt && !hasSkeletonLines()) {
+      state.meta.skeletonBuilt = false;
+      state.meta.branchSlots = [];
+    }
     [ui.s_widthPct, ui.s_stubLen].forEach((el) => {
-      if (el) el.disabled = !built;
+      if (el) el.disabled = false;
     });
     if (ui.spacingNoSkeleton) ui.spacingNoSkeleton.classList.toggle("hidden", built);
-    if (ui.spacingBuildBtn) ui.spacingBuildBtn.classList.toggle("hidden", built);
+    if (ui.spacingBuildBtn) {
+      ui.spacingBuildBtn.classList.toggle("hidden", false);
+      ui.spacingBuildBtn.textContent = built ? "בנה מחדש מבנה קווים" : "בנה מבנה קווים";
+    }
   }
 
   function openSpacingPanel() {
@@ -324,6 +330,8 @@
     syncSpacingPanelState();
     syncSkeletonOptsLabels();
     spacingPanelOpen = true;
+    if (ui.library) ui.library.classList.add("hidden");
+    if (window.RadialMenu) RadialMenu.hide();
     ui.spacingPanel.classList.add("is-open");
     ui.spacingPanel.setAttribute("aria-hidden", "false");
     ui.spacingBackdrop?.classList.add("is-open");
@@ -361,19 +369,23 @@
     };
   }
 
+  function hasSkeletonLines() {
+    return state.elements.some((e) => e.skeleton && (e.t === "line" || e.t === "dot"));
+  }
+
   function readRowLayoutFromUI() {
-    if (!ui.s_rowList) {
-      return state.meta.rowLayout && state.meta.rowLayout.length
-        ? clone(state.meta.rowLayout)
-        : [];
-    }
+    const fromState = state.meta.rowLayout && state.meta.rowLayout.length
+      ? clone(state.meta.rowLayout)
+      : null;
+    if (!ui.s_rowList) return fromState || [];
     const inputs = ui.s_rowList.querySelectorAll("input[data-row-modules]");
+    if (!inputs.length) return fromState || [];
     const rows = [];
     inputs.forEach((inp) => {
       const n = parseInt(inp.value, 10);
       if (n > 0) rows.push({ modules: n });
     });
-    return rows;
+    return rows.length ? rows : (fromState || []);
   }
 
   function resolveRowLayoutForBuild() {
@@ -871,15 +883,18 @@
     ensureFeedLinksDefaults();
     pruneStructuralSkOverrides();
     applySkLineOverrides();
+    syncBusLinesFromSlots();
     syncAllBranchSkeletonGeometry();
     syncChainSymPositions();
     syncWireCrossFromSymbols();
     snapFreeLinesToSkeleton();
+    syncFeedMetaFromLines();
   }
 
   function isStructuralSkId(skId, el) {
     if (!skId) return false;
     if (skId.startsWith("branch-") || skId.startsWith("bus-")) return true;
+    if (skId.startsWith("entry") || skId.startsWith("feed-link") || skId.startsWith("trunk-")) return true;
     if (el && (el.skKind === "branch" || el.skKind === "bus")) return true;
     return false;
   }
@@ -889,12 +904,69 @@
     if (!ov) return false;
     let changed = false;
     for (const k of Object.keys(ov)) {
-      if (k.startsWith("branch-") || k.startsWith("bus-")) {
+      if (k.startsWith("branch-") || k.startsWith("bus-") ||
+          k.startsWith("entry") || k.startsWith("feed-link") || k.startsWith("trunk-")) {
         delete ov[k];
         changed = true;
       }
     }
     return changed;
+  }
+
+  function syncBusLinesFromSlots() {
+    const rows = state.meta.rowLayout || [];
+    for (let ri = 0; ri < rows.length; ri++) {
+      const slots = (state.meta.branchSlots || []).filter((s) => s.row === ri);
+      if (!slots.length) continue;
+      const xs = slots.map((s) => s.x);
+      const busL = Math.min(...xs);
+      const busR = Math.max(...xs);
+      const busY = slots[0].busY != null
+        ? slots[0].busY
+        : (state.meta.rowBusY || {})[ri];
+      const bus = findSkLine("bus-" + ri);
+      if (bus && busY != null) {
+        bus.x1 = snap(busL);
+        bus.x2 = snap(busR);
+        bus.y1 = snap(busY);
+        bus.y2 = snap(busY);
+      }
+    }
+  }
+
+  function skeletonNeedsRealign() {
+    if (!state.meta.skeletonBuilt) return false;
+    const ext = feedBusExtents();
+    const entry = findSkLine("entry");
+    if (!ext || !entry) return false;
+    const fi = feedFirstRowIndex();
+    const bus = findSkLine("bus-" + fi);
+    if (!bus) return true;
+    if (Math.abs(bus.x1 - ext.busL) > 6 || Math.abs(bus.x2 - ext.busR) > 6) return true;
+    const cx = resolveFeedX();
+    if (Math.abs(entry.x1 - cx) > 6) return true;
+    const linked = BoardSkeleton.isLinked(state.meta.feedLinks || {}, "entryBus");
+    if (linked) {
+      const inside = cx >= ext.busL - 8 && cx <= ext.busR + 8;
+      const trunk = findSkLine("trunk-h-" + fi);
+      if (!inside && !trunk) return true;
+    }
+    return false;
+  }
+
+  function realignFeedAndSkeleton() {
+    if (!skeletonNeedsRealign()) return false;
+    const align = state.meta.feedAlign || "center";
+    if (state.meta.feedAlign !== null) {
+      state.meta.feedX = feedXForAlign(align);
+    } else {
+      const ext = feedBusExtents();
+      if (ext) state.meta.feedX = snap((ext.busL + ext.busR) / 2);
+    }
+    state.meta.feedEndY = null;
+    rebuildSkeleton(false);
+    fitViewToDrawing();
+    return true;
   }
 
   function applySkLineOverrides() {
@@ -1030,6 +1102,16 @@
     return moved;
   }
 
+  function slotsExceedPaper() {
+    if (!state.meta.skeletonBuilt) return false;
+    const area = drawingArea();
+    const pad = 36;
+    for (const s of state.meta.branchSlots || []) {
+      if (s.x < area.x0 + pad || s.x > area.x1 - pad) return true;
+    }
+    return false;
+  }
+
   function repairSkeletonGeometry() {
     if (!state.meta.skeletonBuilt) return;
     ensureSkeletonOpts();
@@ -1038,6 +1120,13 @@
       rebuildSkeleton(false);
       return;
     }
+    if (realignFeedAndSkeleton()) return;
+    if (slotsExceedPaper()) {
+      rebuildSkeleton(false);
+      fitViewToDrawing();
+      return;
+    }
+    syncBusLinesFromSlots();
     syncAllBranchSkeletonGeometry();
     syncChainSymPositions();
     snapFreeLinesToSkeleton();
@@ -1101,8 +1190,15 @@
   }
 
   function resolveFeedX() {
-    if (state.meta.feedX != null) return state.meta.feedX;
-    return feedXForAlign(state.meta.feedAlign || "center");
+    const ext = feedBusExtents();
+    const align = state.meta.feedAlign || "center";
+    if (state.meta.feedX != null && ext) {
+      const cx = state.meta.feedX;
+      const inside = cx >= ext.busL - 12 && cx <= ext.busR + 12;
+      if (inside || state.meta.feedAlign == null) return cx;
+    }
+    if (state.meta.feedX != null && !ext) return state.meta.feedX;
+    return feedXForAlign(align);
   }
 
   function getSkeletonGenerateConfig() {
@@ -1148,7 +1244,7 @@
     const area = drawingArea();
     const centerX = state.meta.feedX != null ? state.meta.feedX : area.centerX;
     const spacing = branchSpacingForRow(moduleCount);
-    return BoardSkeleton.centeredBranchXs(centerX, spacing, moduleCount);
+    return BoardSkeleton.centeredBranchXs(centerX, spacing, moduleCount, area);
   }
 
   function finalizeBranchDrag(skId) {
@@ -1547,9 +1643,21 @@
     }
     const opts = readSkeletonOptsFromUI();
     const feedDir = state.meta.feedDir || "top";
-    const result = BoardSkeleton.generate(layout, drawingArea(), opts, {
-      feedDir, rowBusY: {}, feedX: null, feedEndY: null, feedLinks: {},
-    });
+    let result;
+    try {
+      result = BoardSkeleton.generate(layout, drawingArea(), opts, {
+        feedDir, rowBusY: {}, feedX: null, feedEndY: null, feedLinks: {},
+      });
+    } catch (err) {
+      console.error(err);
+      toast("שגיאה בבניית מבנה קווים — נסה שוב");
+      return;
+    }
+    if (!result.lines.length) {
+      toast("לא נוצרו קווים — בדוק חלוקת שורות ב«פרטי גיליון»");
+      openSheetModal();
+      return;
+    }
     commit(() => {
       state.meta.rowLayout = clone(layout);
       state.meta.boardSizeId = board.id;
@@ -1568,7 +1676,8 @@
     if (ui.sheetModal) ui.sheetModal.classList.add("hidden");
     toast(`מבנה קווים: ${layout.length} שורות · ${BoardSkeleton.sumModules(layout)} ענפים`);
     syncSpacingPanelState();
-    openSpacingPanel();
+    fitViewToDrawing();
+    if (spacingPanelOpen) syncSkeletonOptsLabels();
   }
 
   function branchHalfWidth(rowIdx) {
@@ -1685,13 +1794,26 @@
     const { lineX, spaceLeft, spaceRight, isLeftmost, isRightmost } = col;
 
     let descOnRight;
-    if (isRightmost && !isLeftmost) descOnRight = true;
+    const drawArea = drawingArea();
+    const paperPad = 48;
+    if (isRightmost && !isLeftmost) descOnRight = false;
     else if (isLeftmost && !isRightmost) descOnRight = false;
     else descOnRight = spaceRight >= spaceLeft;
 
     const lanePad = 8;
-    const descOff = Math.min(42, Math.max(26, (descOnRight ? spaceRight : spaceLeft) - lanePad - 10));
-    const ratingOff = Math.min(34, Math.max(20, (descOnRight ? spaceLeft : spaceRight) - lanePad - 6));
+    let descOff = Math.min(42, Math.max(26, (descOnRight ? spaceRight : spaceLeft) - lanePad - 10));
+    let ratingOff = Math.min(34, Math.max(20, (descOnRight ? spaceLeft : spaceRight) - lanePad - 6));
+
+    if (descOnRight && lineX + descOff > drawArea.x1 - paperPad) {
+      descOnRight = false;
+      descOff = Math.min(42, Math.max(26, spaceLeft - lanePad - 10));
+      ratingOff = Math.min(34, Math.max(20, spaceRight - lanePad - 6));
+    }
+    if (!descOnRight && lineX - descOff < drawArea.x0 + paperPad) {
+      descOnRight = true;
+      descOff = Math.min(42, Math.max(26, spaceRight - lanePad - 10));
+      ratingOff = Math.min(34, Math.max(20, spaceLeft - lanePad - 6));
+    }
 
     if (descOnRight) {
       return {
@@ -1737,55 +1859,87 @@
     return size * 1.15 + 8;
   }
 
+  function branchDescMaxWidth(slot) {
+    if (!slot) return 80;
+    const col = branchColumnBounds(slot);
+    return Math.max(32, col.rightBound - col.leftBound - 12);
+  }
+
+  function wrapTextToWidth(text, maxWidth, fontSize, fontWeight) {
+    if (!text) return [];
+    const g = ctx;
+    g.save();
+    g.font = `${fontWeight || 500} ${fontSize}px ui-sans-serif, system-ui, "Noto Sans Hebrew", Arial, sans-serif`;
+    const words = String(text).split(/\s+/).filter(Boolean);
+    if (!words.length) { g.restore(); return []; }
+    const lines = [];
+    let cur = "";
+    for (const w of words) {
+      const test = cur ? cur + " " + w : w;
+      if (g.measureText(test).width <= maxWidth || !cur) cur = test;
+      else { lines.push(cur); cur = w; }
+    }
+    if (cur) lines.push(cur);
+    g.restore();
+    return lines.length ? lines : [String(text)];
+  }
+
+  function branchDescBaseY(slot, sym, symCount) {
+    if (symCount === 1 && slot?.stubEnd != null) return slot.stubEnd + 16;
+    return sym.y + 34;
+  }
+
   function resolveBranchDescLayout(el) {
     const cached = branchDescLayoutCache.get(el.slotKey);
     if (cached && cached.has(el.id)) return cached.get(el.id);
 
     const slot = findSlotByKey(el.slotKey);
-    const lanes = branchAnnotationLanes(el.slotKey);
+    const lineX = slot ? slot.x : el.x;
     const syms = symsOnSlot(el.slotKey).filter((s) => s.desc || s.label);
-    const mmYs = mmLabelYsForSlot(el.slotKey);
     const layouts = new Map();
+    const size = 10;
+    const lineGap = size * 1.22;
+    const maxW = branchDescMaxWidth(slot);
     const placed = [];
-    const size = 11;
-    const badgeH = estimateDescBadgeH(size);
 
     for (const sym of syms) {
-      const isOnly = syms.length === 1;
-      let y = isOnly && slot?.stubEnd != null
-        ? slot.stubEnd + 50
-        : sym.y;
-      for (let guard = 0; guard < 24; guard++) {
+      const desc = sym.desc || sym.label || "";
+      const lines = wrapTextToWidth(desc, maxW, size, 500);
+      const blockH = lines.length * lineGap;
+      let y = branchDescBaseY(slot, sym, syms.length);
+
+      for (let guard = 0; guard < 20; guard++) {
         let moved = false;
+        const top = y - blockH / 2;
+        const bot = y + blockH / 2;
         for (const p of placed) {
-          if (Math.abs(p.y - y) < (p.h + badgeH) / 2 + 5) {
-            y = p.y + (p.h + badgeH) / 2 + 6;
-            moved = true;
-          }
-        }
-        for (const my of mmYs) {
-          if (Math.abs(my - y) < badgeH / 2 + 10) {
-            y = my + badgeH / 2 + 12;
+          if (bot + 4 > p.top && top - 4 < p.bot) {
+            y = p.bot + blockH / 2 + 6;
             moved = true;
           }
         }
         if (!moved) break;
       }
-      placed.push({ y, h: badgeH });
+
+      placed.push({ top: y - blockH / 2, bot: y + blockH / 2 });
       layouts.set(sym.id, {
-        x: lanes.desc.x,
+        x: snap(lineX),
         y: snap(y),
-        size: isOnly ? 12 : size,
-        align: lanes.desc.align,
+        size,
+        align: "center",
+        lines,
+        lineGap,
       });
     }
 
     branchDescLayoutCache.set(el.slotKey, layouts);
     return layouts.get(el.id) || {
-      x: lanes.desc.x,
-      y: snap(el.y),
+      x: snap(lineX),
+      y: snap(el.y + 34),
       size,
-      align: lanes.desc.align,
+      align: "center",
+      lines: wrapTextToWidth(el.desc || el.label || "", maxW, size, 500),
+      lineGap,
     };
   }
 
@@ -2352,9 +2506,16 @@
     return el;
   }
 
+  function stageSize() {
+    const stage = document.getElementById("canvas-stage");
+    if (!stage) return { w: innerWidth, h: innerHeight };
+    const r = stage.getBoundingClientRect();
+    return { w: Math.max(1, r.width), h: Math.max(1, r.height) };
+  }
+
   function resize() {
     dpr = Math.max(1, window.devicePixelRatio || 1);
-    const w = innerWidth, h = innerHeight;
+    const { w, h } = stageSize();
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
     canvas.style.width = w + "px";
@@ -2362,11 +2523,11 @@
     render();
   }
   function paperFit() {
-    const cw = innerWidth, ch = innerHeight;
-    const mobile = cw <= 768;
-    const topM = mobile ? 0.13 : 0.04;
-    const bottomM = mobile ? 0.2 : 0.04;
-    const sideM = mobile ? 0.05 : 0.04;
+    const { w: cw, h: ch } = stageSize();
+    const mobile = cw <= 520;
+    const topM = mobile ? 0.08 : 0.05;
+    const bottomM = mobile ? 0.1 : 0.05;
+    const sideM = mobile ? 0.06 : 0.05;
     const aw = cw * (1 - 2 * sideM);
     const ah = ch * (1 - topM - bottomM);
     const s = Math.min(aw / PAPER.W, ah / PAPER.H);
@@ -2387,15 +2548,13 @@
   }
 
   function render() {
+    const { w, h } = stageSize();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.direction = "ltr";
-    ctx.clearRect(0, 0, innerWidth, innerHeight);
-    ctx.fillStyle = "#15181d";
-    ctx.fillRect(0, 0, innerWidth, innerHeight);
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#0e1014";
+    ctx.fillRect(0, 0, w, h);
     const t = T();
-    const a = w2s(0, 0, t), b = w2s(PAPER.W, PAPER.H, t);
-    ctx.fillStyle = "rgba(0,0,0,.5)";
-    ctx.fillRect(a.x + 6, a.y + 8, b.x - a.x, b.y - a.y);
     drawSheet(ctx, t, { grid: true });
     drawSelection(ctx, t);
     if (draftLine) drawLineEl(ctx, t, draftLine);
@@ -2403,8 +2562,12 @@
 
   function drawSheet(g, t, opts) {
     const a = w2s(0, 0, t), b = w2s(PAPER.W, PAPER.H, t);
+    const pw = b.x - a.x, ph = b.y - a.y;
     g.fillStyle = "#ffffff";
-    g.fillRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    g.fillRect(a.x, a.y, pw, ph);
+    g.strokeStyle = "rgba(0,0,0,0.06)";
+    g.lineWidth = 1;
+    g.strokeRect(a.x + 0.5, a.y + 0.5, pw - 1, ph - 1);
     if (opts && opts.grid) drawGrid(g, t);
     drawElements(g, t);
     drawBranchSlots(g, t);
@@ -2511,6 +2674,16 @@
     g.strokeText(s, p.x, p.y);
     g.fillStyle = col || "#111";
     g.fillText(s, p.x, p.y);
+  }
+
+  function wtextMultilineHalo(g, t, lines, x, y, size, align, col, lineGap) {
+    if (!lines || !lines.length) return;
+    const gap = lineGap || size * 1.22;
+    const totalH = (lines.length - 1) * gap;
+    const startY = y - totalH / 2;
+    for (let i = 0; i < lines.length; i++) {
+      wtextWithHalo(g, t, lines[i], x, startY + i * gap, size, align, "middle", col);
+    }
   }
 
   function wtextWithBadge(g, t, s, x, y, size, al, bl, col) {
@@ -2628,7 +2801,7 @@
       if (Math.abs(el.x1 - el.x2) < 2 && segH >= 10) {
         const label = branchCrossLabelForLine(el, cs);
         const my = (el.y1 + el.y2) / 2;
-        wtextOnBranchLine(g, t, label, lineX, my, 10);
+        wtextVerticalWithHalo(g, t, label, lineX, my, 10, 12, "#333");
       }
     } else if (el.skeleton && el.skKind !== "branch") {
       const mx = (el.x1 + el.x2) / 2;
@@ -2741,16 +2914,6 @@
     g.translate(c.x, c.y);
     g.rotate((el.rot || 0) * Math.PI / 180);
     g.scale(t.s, t.s);
-    if (el.slotKey) {
-      g.fillStyle = "#fff";
-      g.strokeStyle = "rgba(0,0,0,0.14)";
-      g.lineWidth = 1;
-      const bw = 36, bh = 22, br = 4;
-      g.beginPath();
-      g.roundRect(-bw / 2, -bh / 2, bw, bh, br);
-      g.fill();
-      g.stroke();
-    }
     g.strokeStyle = "#111"; g.fillStyle = "#111";
     g.lineWidth = 1.8; g.lineCap = "round"; g.lineJoin = "round";
     drawSymGraphic(g, el, def);
@@ -2783,8 +2946,7 @@
     const rating = symRatingLabel(el, def);
     if (rating) {
       if (el.slotKey) {
-        const lanes = branchAnnotationLanes(el.slotKey);
-        wtextWithBadge(g, t, rating, lanes.rating.x, el.y - 30, 11, lanes.rating.align, "middle", "#111");
+        wtextWithHalo(g, t, rating, el.x, el.y - 22, 11, "center", "middle", "#111");
       } else {
         wtextWithHalo(g, t, rating, el.x, el.y - 28, 12, "center", "middle", "#111");
       }
@@ -2816,7 +2978,11 @@
     const desc = el.desc || el.label;
     if (!desc) return;
     const layout = el.slotKey ? computeSymLabelLayout(el) : (el.labelLayout || computeSymLabelLayout(el));
-    if (el.slotKey) drawDescLeaderLine(g, t, el.x, el.y, layout);
+    if (el.slotKey) {
+      const lines = layout.lines || wrapTextToWidth(desc, branchDescMaxWidth(findSlotByKey(el.slotKey)), layout.size || 10, 500);
+      wtextMultilineHalo(g, t, lines, layout.x, layout.y, layout.size, layout.align, "#111", layout.lineGap);
+      return;
+    }
     wtextWithBadge(g, t, desc, layout.x, layout.y, layout.size, layout.align, "middle", "#111");
   }
 
@@ -2828,7 +2994,7 @@
   function drawSelection(g, t) {
     const el = state.elements.find((e) => e.id === state.selectedId);
     if (el) {
-      g.strokeStyle = "#ffb020"; g.lineWidth = 2; g.setLineDash([6, 4]);
+      g.strokeStyle = "#3b82f6"; g.lineWidth = 2; g.setLineDash([6, 4]);
       if (el.t === "sym") {
         const c = w2s(el.x, el.y, t), s = 22 * t.s;
         g.strokeRect(c.x - s, c.y - s, 2 * s, 2 * s);
@@ -2937,6 +3103,10 @@
   function pointerDown(sx, sy) {
     if (window.RadialMenu && RadialMenu.isOpen() && !RadialMenu.hitTest(sx, sy)) {
       RadialMenu.hide();
+    }
+    if (spacePanHeld || altPanHeld) {
+      panStart(sx, sy);
+      return;
     }
     const w = s2w(sx, sy);
     if (tool === "place" && placeSym) {
@@ -3185,8 +3355,15 @@
     return clamp(y, r.y0 + GRID, r.y1 - GRID);
   }
 
-  let panning = false, panLast = null;
-  function panStart(sx, sy) { panning = true; panLast = { x: sx, y: sy }; }
+  let panning = false, panLast = null, spacePanHeld = false, altPanHeld = false;
+
+  function updateCanvasCursor() {
+    if (panning) { canvas.style.cursor = "grabbing"; return; }
+    if (spacePanHeld || altPanHeld || tool === "pan") { canvas.style.cursor = "grab"; return; }
+    canvas.style.cursor = tool === "text" ? "text" : tool === "line" ? "crosshair" : "default";
+  }
+
+  function panStart(sx, sy) { panning = true; panLast = { x: sx, y: sy }; updateCanvasCursor(); }
   function panMove(sx, sy) {
     if (!panLast) return;
     view.tx += sx - panLast.x;
@@ -3264,7 +3441,7 @@
     else pointerMove(sx, sy);
   });
   window.addEventListener("mouseup", () => {
-    if (mDown === "pan") { panning = false; canvas.style.cursor = ""; }
+    if (mDown === "pan") { panning = false; updateCanvasCursor(); }
     else if (mDown) pointerUp();
     mDown = false;
   });
@@ -3305,6 +3482,19 @@
 
   window.addEventListener("keydown", (e) => {
     if (modalOpen()) return;
+    if (e.code === "Space" && document.activeElement !== ui.textInput &&
+        !ui.textInput.classList.contains("visible")) {
+      if (!spacePanHeld) {
+        spacePanHeld = true;
+        updateCanvasCursor();
+      }
+      e.preventDefault();
+      return;
+    }
+    if (e.key === "Alt") {
+      altPanHeld = true;
+      updateCanvasCursor();
+    }
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
     else if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
@@ -3331,6 +3521,21 @@
       canvas.style.cursor = "";
       hideBranchPopup(); hideFeedPopup();
       render(); syncUI();
+    }
+  });
+
+  window.addEventListener("keyup", (e) => {
+    if (e.code === "Space") {
+      spacePanHeld = false;
+      panning = false;
+      panLast = null;
+      updateCanvasCursor();
+    }
+    if (e.key === "Alt") {
+      altPanHeld = false;
+      panning = false;
+      panLast = null;
+      updateCanvasCursor();
     }
   });
 
@@ -3404,6 +3609,22 @@
     });
   }
 
+  function radialCenterHtml(el) {
+    const def = SYMBOLS[el.sym];
+    const title = el.desc || el.label || def?.name || "רכיב";
+    const parts = [];
+    if (def && def.hasRating) {
+      const rating = symRatingLabel(el, def);
+      if (rating) parts.push(rating);
+    }
+    const wireCs = el.slotKey
+      ? getWireCross(wireSkForChainSym(el.slotKey, el.chainIdx || 0))
+      : el.crossSection;
+    if (wireCs != null) parts.push(formatCrossLabel(wireCs));
+    const sub = parts.join(" · ");
+    return "<strong>" + title + "</strong>" + (sub ? "<span>" + sub + "</span>" : "");
+  }
+
   function presentSymActions(el, sx, sy) {
     if (!el || el.t !== "sym") return;
     state.selectedId = el.id;
@@ -3418,6 +3639,8 @@
       px = c.x;
       py = c.y;
     }
+    const hole = document.getElementById("radialMenuHole");
+    if (hole) hole.innerHTML = radialCenterHtml(el);
     if (window.RadialMenu) RadialMenu.show(el, px, py);
     render();
     syncUI();
@@ -3504,10 +3727,10 @@
       openSymEdit(el, false);
       return;
     }
-    if (action === "change") {
+    if (action === "link" || action === "change") {
       if (el.slotKey) {
         openSymEdit(el, false);
-        showLibraryForSlot(el.slotKey, el.chainIdx || 0, "בחר סמל להחלפה");
+        showLibraryForSlot(el.slotKey, el.chainIdx || 0, "בחר סמל לשיוך / החלפה");
       } else {
         openSymEdit(el, true);
       }
@@ -3810,13 +4033,16 @@
 
   function setActiveTool(name) {
     ui.tools.querySelectorAll(".tool[data-tool]").forEach((b) => b.classList.toggle("is-active", b.dataset.tool === name));
+    updateCanvasCursor();
   }
   function renderModuleDashboard() {
-    if (!ui.moduleDashboard || !ui.moduleTrack) return;
     const built = !!state.meta.skeletonBuilt;
-    ui.moduleDashboard.classList.toggle("hidden", !built);
     document.body.classList.toggle("has-board", built);
-    if (!built) return;
+    if (!built) {
+      if (ui.moduleCountUsed) ui.moduleCountUsed.textContent = "0";
+      if (ui.moduleCountTotal) ui.moduleCountTotal.textContent = String(currentBoard().modules);
+      return;
+    }
 
     const cap = layoutBranchTotal();
     const occupied = countOccupiedBranches();
@@ -3825,53 +4051,21 @@
 
     if (ui.moduleCountUsed) ui.moduleCountUsed.textContent = String(occupied);
     if (ui.moduleCountTotal) ui.moduleCountTotal.textContent = String(cap);
-    if (ui.moduleBoardTitle) ui.moduleBoardTitle.textContent = state.meta.title || state.meta.file || "לוח ראשי";
-    if (ui.moduleBoardSub) {
-      const rows = (state.meta.rowLayout || []).length;
-      ui.moduleBoardSub.textContent = cap + " ענפים" + (rows ? " · " + rows + " שורות" : "");
+    if (ui.sheetTitleLabel) {
+      const title = state.meta.title || state.meta.file || "לוח ראשי";
+      ui.sheetTitleLabel.textContent = title + " - " + cap + " מודולים";
     }
-    ui.moduleDashboard.classList.toggle("is-over", over);
-
-    const slots = state.meta.branchSlots || [];
-    ui.moduleTrack.innerHTML = "";
-    slots.forEach((slot, idx) => {
-      const pill = document.createElement("button");
-      pill.type = "button";
-      pill.className = "module-pill";
-      pill.setAttribute("role", "listitem");
-      const syms = symsOnSlot(slot.slotKey);
-      if (syms.length) pill.classList.add("is-used");
-      if (syms.length > 1) pill.classList.add("is-chain");
-      if (selectedBranchKey === slot.slotKey) pill.classList.add("is-selected");
-      const label = syms[0]?.desc || syms[0] && SYMBOLS[syms[0].sym]?.name || "";
-      pill.title = "מודול " + (idx + 1) + (label ? " · " + label : "");
-      pill.addEventListener("click", (e) => {
-        e.stopPropagation();
-        selectModuleFromDashboard(slot.slotKey, pill);
-      });
-      ui.moduleTrack.appendChild(pill);
-    });
-  }
-
-  function selectModuleFromDashboard(slotKey, pillEl) {
-    if (!slotKey) return;
-    selectedBranchKey = slotKey;
-    state.selectedId = null;
-    hideFeedPopup();
-    closeSymEdit();
-    if (window.RadialMenu) RadialMenu.hide();
-    renderModuleDashboard();
-    render();
-    const rect = pillEl ? pillEl.getBoundingClientRect() : null;
-    const sx = rect ? clamp(rect.left + rect.width / 2, 80, innerWidth - 80) : innerWidth / 2;
-    const sy = rect ? clamp(rect.bottom + 10, 80, innerHeight - 120) : innerHeight * 0.45;
-    showBranchPopup(sx, sy, slotKey);
-    syncUI();
+    const vipBar = document.getElementById("vipTopBar");
+    if (vipBar) vipBar.classList.toggle("is-over", over);
   }
 
   function syncUI() {
     ui.emptyHint.classList.toggle("hidden", state.elements.length > 0 || !ui.library.classList.contains("hidden") || state.meta.skeletonBuilt);
-    ui.sheetTitleLabel.textContent = state.meta.title || "לוח חדש";
+    const cap = state.meta.skeletonBuilt ? layoutBranchTotal() : currentBoard().modules;
+    const title = state.meta.title || state.meta.file || "לוח חדש";
+    ui.sheetTitleLabel.textContent = state.meta.skeletonBuilt
+      ? title + " - " + cap + " מודולים"
+      : title;
     const board = currentBoard();
     ui.boardChipLabel.textContent = board.label + (state.meta.skeletonBuilt && state.meta.rowLayout && state.meta.rowLayout.length
       ? " · " + state.meta.rowLayout.length + " שורות"
@@ -3928,6 +4122,37 @@
     }
   }
 
+  function wireSpacingPanel() {
+    const panel = ui.spacingPanel;
+    if (!panel) return;
+
+    const onBuild = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      buildSkeletonLines();
+    };
+    const onClose = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeSpacingPanel();
+    };
+
+    ui.spacingBuildBtn?.addEventListener("click", onBuild);
+    ui.spacingClose?.addEventListener("click", onClose);
+    ui.spacingBackdrop?.addEventListener("click", closeSpacingPanel);
+
+    panel.addEventListener("input", (e) => {
+      if (e.target.matches("#s_widthPct, #s_stubLen")) applySpacingOptsLive();
+    });
+    panel.addEventListener("change", (e) => {
+      if (e.target.matches("#s_widthPct, #s_stubLen")) commitSpacingOptsSave();
+    });
+
+    panel.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+    });
+  }
+
   function wireUI() {
     if (ui.startAppBtn && ui.splashScreen) {
       ui.startAppBtn.addEventListener("click", () => {
@@ -3941,10 +4166,14 @@
         disarm();
         tool = btn.dataset.tool;
         setActiveTool(tool);
-        canvas.style.cursor = tool === "pan" ? "grab" : tool === "text" ? "text" : tool === "line" ? "crosshair" : "default";
+        updateCanvasCursor();
       });
     });
     ui.rotateBtn.addEventListener("click", rotateSelected);
+    ui.fitViewBtn?.addEventListener("click", () => {
+      fitViewToDrawing();
+      toast("תצוגה ממורכזת");
+    });
     ui.delBtn.addEventListener("click", deleteSelected);
     ui.undo.addEventListener("click", undo);
     ui.redo.addEventListener("click", redo);
@@ -3962,9 +4191,7 @@
 
     ui.sheetInfoBtn.addEventListener("click", openSheetModal);
     ui.spacingBtn?.addEventListener("click", toggleSpacingPanel);
-    ui.spacingClose?.addEventListener("click", closeSpacingPanel);
-    ui.spacingBackdrop?.addEventListener("click", closeSpacingPanel);
-    ui.spacingBuildBtn?.addEventListener("click", buildSkeletonLines);
+    wireSpacingPanel();
     ui.s_save.addEventListener("click", saveSheetInfo);
     ui.s_newProject.addEventListener("click", newProject);
     ui.s_cancel.addEventListener("click", () => ui.sheetModal.classList.add("hidden"));
@@ -3999,11 +4226,6 @@
     ui.s_evenSplit.addEventListener("click", applyEvenSplit);
     ui.s_templateStyle.addEventListener("click", applyTemplateStyle);
     ui.s_buildSkeleton?.addEventListener("click", buildSkeletonLines);
-    [ui.s_widthPct, ui.s_stubLen].forEach((el) => {
-      if (!el) return;
-      el.addEventListener("input", applySpacingOptsLive);
-      el.addEventListener("change", commitSpacingOptsSave);
-    });
     ui.s_material.addEventListener("change", () => {
       if (ui.sheetModal.classList.contains("hidden")) return;
     });
@@ -4144,11 +4366,64 @@
     checkModuleOverflow(true);
   }
 
-  function resetViewForMobile() {
-    if (innerWidth <= 768 || isCoarsePointer()) {
-      view.scale = clamp(view.scale, 1.05, 1.35);
-      if (view.scale < 1.05) view.scale = 1.1;
+  function resetView() {
+    view.tx = 0;
+    view.ty = 0;
+    view.scale = 1;
+    render();
+  }
+
+  function fitViewToDrawing() {
+    const { w: cw, h: ch } = stageSize();
+    const area = drawingArea();
+    let minX = area.x0;
+    let maxX = area.x1;
+    let minY = area.y0;
+    let maxY = area.y1;
+    const slots = state.meta.branchSlots || [];
+    if (slots.length) {
+      minX = Math.min(...slots.map((s) => s.x));
+      maxX = Math.max(...slots.map((s) => s.x));
+      minY = Math.min(...slots.map((s) => s.busY != null ? s.busY : s.y));
+      maxY = Math.max(...slots.map((s) => {
+        let y = s.stubEnd != null ? s.stubEnd : s.y + 120;
+        const sym = symsOnSlot(s.slotKey).find((e) => e.desc || e.label);
+        if (sym) y += 52;
+        return y;
+      }));
     }
+    const entry = state.meta.skeletonBuilt ? findSkLine("entry") : null;
+    if (entry) {
+      minX = Math.min(minX, entry.x1);
+      maxX = Math.max(maxX, entry.x1);
+      minY = Math.min(minY, entry.y1, entry.y2);
+      maxY = Math.max(maxY, entry.y1, entry.y2);
+    }
+    minX -= 90;
+    maxX += 50;
+    minY -= 50;
+    maxY += 56;
+
+    const f = paperFit();
+    const worldW = Math.max(120, maxX - minX);
+    const worldH = Math.max(120, maxY - minY);
+    const sFit = Math.min((cw * 0.9) / (worldW * f.s), (ch * 0.88) / (worldH * f.s));
+    view.scale = clamp(Math.min(sFit, 1.2), MIN_SCALE, MAX_SCALE);
+
+    const sc = f.s * view.scale;
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    view.tx = cw / 2 - cx * sc - f.ox * view.scale;
+    view.ty = ch / 2 - cy * sc - f.oy * view.scale;
+    render();
+  }
+
+  function resetViewForMobile() {
+    if (state.meta.skeletonBuilt) {
+      fitViewToDrawing();
+      return;
+    }
+    resetView();
   }
 
   function init() {
@@ -4160,6 +4435,13 @@
     populateBoardSelect();
     addEventListener("resize", resize);
     addEventListener("orientationchange", resize);
+    const stageEl = document.getElementById("canvas-stage");
+    const vipBarEl = document.getElementById("vipTopBar");
+    if (typeof ResizeObserver !== "undefined") {
+      const layoutRo = new ResizeObserver(() => resize());
+      if (stageEl) layoutRo.observe(stageEl);
+      if (vipBarEl) layoutRo.observe(vipBarEl);
+    }
     load();
     welcomeBoardId = state.meta.boardSizeId || "2x24";
     if (!state.meta.rowLayout || !state.meta.rowLayout.length ||
@@ -4171,6 +4453,10 @@
     if (!state.meta.feedDir) state.meta.feedDir = "top";
     if (!state.meta.feedAlign) state.meta.feedAlign = "center";
     if (state.meta.skeletonBuilt == null) state.meta.skeletonBuilt = false;
+    if (state.meta.skeletonBuilt && !state.elements.some((e) => e.skeleton)) {
+      state.meta.skeletonBuilt = false;
+      state.meta.branchSlots = [];
+    }
     if (!state.meta.skeletonBuilt) {
       state.elements = state.elements.filter((e) => !e.skeleton);
       state.meta.branchSlots = [];

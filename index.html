@@ -79,45 +79,48 @@
     </div>
   </div>
 
-  <canvas id="sheet" aria-label="גיליון שרטוט"></canvas>
+  <div id="app-shell" class="app-shell">
 
-  <!-- ===================== TOP BAR ===================== -->
-  <header class="panel topbar" id="topbar">
-    <div class="brand">
-      <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none"><path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" fill="currentColor"/></svg>
-      </span>
-      <span class="brand-name">חשמלאי שרטט חכם</span>
+  <div id="canvas-stage" class="canvas-stage">
+    <canvas id="sheet" aria-label="גיליון שרטוט"></canvas>
+  </div>
+
+  <!-- ===================== VIP TOP BAR (unified) ===================== -->
+  <header class="vip-topbar" id="vipTopBar" aria-label="סרגל עליון">
+    <div class="vip-topbar__main">
+      <a class="vip-topbar__a11y" href="accessibility.html" title="הצהרת נגישות" aria-label="נגישות">♿</a>
+      <div class="vip-topbar__brand brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" fill="currentColor"/></svg>
+        </span>
+        <div class="vip-topbar__titles">
+          <span class="brand-name">חשמלאי שרטט חכם</span>
+          <span class="vip-topbar__title" id="sheetTitleLabel">לוח חדש</span>
+        </div>
+      </div>
+
+      <div class="vip-topbar__chips">
+        <button class="chip chip--glass" id="boardChip" title="גודל לוח">
+          <span id="boardChipLabel">2 שורות · 24 מודולים</span>
+        </button>
+        <button class="chip chip--glass" id="sheetInfoBtn" title="פרטי גיליון / כותרת">
+          <span class="chip-caret" aria-hidden="true">✎</span>
+          <span>פרטי גיליון</span>
+        </button>
+        <button class="chip chip--glass" id="spacingBtn" type="button" title="מרווחים לקריאה / ייצוא">
+          <span>מרווחים</span>
+        </button>
+      </div>
+
+      <div class="vip-topbar__status" id="vipTopStatus" aria-label="מצב מודולים">
+        <span class="vip-topbar__status-icon" aria-hidden="true">⚡</span>
+        <span class="vip-topbar__status-count">
+          <span id="moduleCountUsed">0</span><span class="module-dashboard__slash">/</span><span id="moduleCountTotal">24</span>
+        </span>
+        <small>בשימוש</small>
+      </div>
     </div>
-    <button class="chip" id="boardChip" title="גודל לוח">
-      <span id="boardChipLabel">2 שורות · 24 מודולים</span>
-    </button>
-    <button class="chip" id="sheetInfoBtn" title="פרטי גיליון / כותרת">
-      <span id="sheetTitleLabel">לוח חדש</span>
-      <span class="chip-caret" aria-hidden="true">✎</span>
-    </button>
-    <button class="chip" id="spacingBtn" type="button" title="מרווחים לקריאה / ייצוא — תצוגה חיה">
-      <span>מרווחים · ייצוא</span>
-    </button>
   </header>
-
-  <!-- ===================== MODULE DASHBOARD (VIP) ===================== -->
-  <section class="module-dashboard hidden" id="moduleDashboard" aria-label="מצב מודולים בלוח">
-    <div class="module-dashboard__info">
-      <div class="module-dashboard__count" aria-label="מודולים בשימוש">
-        <span id="moduleCountUsed">0</span><span class="module-dashboard__slash">/</span><span id="moduleCountTotal">24</span>
-        <small>תפוס</small>
-      </div>
-      <div class="module-dashboard__meta">
-        <strong id="moduleBoardTitle">לוח ראשי</strong>
-        <span id="moduleBoardSub">24 מודולים</span>
-      </div>
-    </div>
-    <div class="module-dashboard__track-wrap">
-      <div class="module-dashboard__track" id="moduleTrack" role="list" aria-label="מודולים בלוח"></div>
-    </div>
-    <p class="module-dashboard__hint">ירוק = תפוס · לחץ לבחירת מודול</p>
-  </section>
 
   <!-- ===================== FILE DOCK (שמאל) ===================== -->
   <div class="panel dock dock--side actions" id="actions" aria-label="קובץ וייצוא">
@@ -146,31 +149,33 @@
 
   <!-- ===================== TOOL DOCK (תחתון) ===================== -->
   <nav class="panel dock dock--bottom tools" id="tools" aria-label="כלי שרטוט">
-    <button class="dock-btn tool is-active" data-tool="select" title="בחירה / הזזה" aria-label="בחירה">
-      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M5 3l15 8-6 2-2 6z"/></svg></span>
-      <span class="dock-btn__label">בחירה</span>
+    <button class="dock-btn tool danger" id="delBtn" title="מחיקת רכיב נבחר" aria-label="מחיקה">
+      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></span>
+      <span class="dock-btn__label">מחיקה</span>
     </button>
-    <button class="dock-btn tool" data-tool="pan" title="הזזת תצוגה" aria-label="הזזה">
-      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M8 7l4-4 4 4M8 17l4 4 4-4M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg></span>
-      <span class="dock-btn__label">הזזה</span>
-    </button>
-    <div class="dock-sep" aria-hidden="true"></div>
-    <button class="dock-btn tool" data-tool="line" title="קו / כבל" aria-label="קו">
-      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M4 20L20 4"/></svg></span>
-      <span class="dock-btn__label">קו</span>
+    <button class="dock-btn tool" id="rotateBtn" title="סיבוב 90°" aria-label="סיבוב">
+      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"/></svg></span>
+      <span class="dock-btn__label">סיבוב</span>
     </button>
     <button class="dock-btn tool" data-tool="text" title="טקסט / תווית" aria-label="טקסט">
       <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13M9 19h6"/></svg></span>
       <span class="dock-btn__label">טקסט</span>
     </button>
-    <div class="dock-sep" aria-hidden="true"></div>
-    <button class="dock-btn tool" id="rotateBtn" title="סיבוב 90°" aria-label="סיבוב">
-      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v5h-5"/></svg></span>
-      <span class="dock-btn__label">סיבוב</span>
+    <button class="dock-btn tool" data-tool="line" title="קו / כבל" aria-label="קו">
+      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M4 20L20 4"/></svg></span>
+      <span class="dock-btn__label">קו</span>
     </button>
-    <button class="dock-btn tool danger" id="delBtn" title="מחק נבחר" aria-label="מחק">
-      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg></span>
-      <span class="dock-btn__label">מחק</span>
+    <button class="dock-btn tool" data-tool="pan" title="הזזת תצוגה (Space / Alt+גרירה)" aria-label="הזזה">
+      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M8 7l4-4 4 4M8 17l4 4 4-4M7 8l-4 4 4 4M17 8l4 4-4 4"/></svg></span>
+      <span class="dock-btn__label">הזזה</span>
+    </button>
+    <button class="dock-btn tool is-active" data-tool="select" title="בחירה / הזזה" aria-label="בחירה">
+      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M5 3l15 8-6 2-2 6z"/></svg></span>
+      <span class="dock-btn__label">בחירה</span>
+    </button>
+    <button class="dock-btn tool dock-btn--compact" id="fitViewBtn" type="button" title="מרכז את כל השרטוט בתצוגה" aria-label="מרכז תצוגה">
+      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/><circle cx="12" cy="12" r="3"/></svg></span>
+      <span class="dock-btn__label">מרכז</span>
     </button>
   </nav>
 
@@ -253,30 +258,6 @@
       </div>
     </div>
   </div>
-
-  <!-- Spacing panel — live preview; bottom sheet on mobile -->
-  <div class="spacing-backdrop" id="spacingBackdrop" aria-hidden="true"></div>
-  <aside class="panel spacing-panel" id="spacingPanel" aria-label="מרווחים לקריאה / ייצוא" aria-hidden="true">
-    <div class="spacing-head">
-      <strong>מרווחים לקריאה / ייצוא</strong>
-      <button type="button" class="lib-close" id="spacingClose" aria-label="סגור">✕</button>
-    </div>
-    <div class="spacing-body">
-      <p class="spacing-live-hint">הזז סליידר — השרטוט מתעדכן מיד · גרור שורת bus או ● — מיקום ידני · ● תחתון — אורך מודול</p>
-      <p class="spacing-warn hidden" id="spacingNoSkeleton">אין עדיין מבנה קווים — לחץ למטה או בנה מ«פרטי גיליון»</p>
-      <button type="button" class="btn primary spacing-build-btn" id="spacingBuildBtn">בנה מבנה קווים</button>
-      <label class="range-field">
-        <span>מרווח בין מודולים <b id="s_widthPctVal">140%</b></span>
-        <input type="range" id="s_widthPct" min="80" max="200" value="140" />
-        <small>נקבע ב«בנה מבנה קווים» — לא ניתן לגרור מודולים אופקית</small>
-      </label>
-      <label class="range-field">
-        <span>אורך המודול <b id="s_stubLenVal">100px</b></span>
-        <input type="range" id="s_stubLen" min="56" max="220" value="100" />
-      </label>
-      <p class="spacing-preview" id="s_spacingPreview"></p>
-    </div>
-  </aside>
 
   <!-- Symbol edit panel + library (non-blocking) -->
   <aside class="panel sym-edit-panel hidden" id="symEditPanel" aria-label="עריכת רכיב">
@@ -394,19 +375,49 @@
     <div class="radial-menu__dim" aria-hidden="true"></div>
     <div class="radial-menu__ring" aria-hidden="true"></div>
     <button type="button" class="radial-menu__btn radial-menu__btn--props" data-radial="props">
+      <span class="radial-menu__btn-icon" aria-hidden="true">⚙</span>
       <span>מאפיינים</span>
     </button>
-    <button type="button" class="radial-menu__btn radial-menu__btn--change" data-radial="change">
-      <span>שינוי</span>
-    </button>
     <button type="button" class="radial-menu__btn radial-menu__btn--duplicate" data-radial="duplicate">
+      <span class="radial-menu__btn-icon" aria-hidden="true">⧉</span>
       <span>שכפול</span>
     </button>
     <button type="button" class="radial-menu__btn radial-menu__btn--delete" data-radial="delete">
-      <span>מחק</span>
+      <span class="radial-menu__btn-icon" aria-hidden="true">🗑</span>
+      <span>מחיקה</span>
     </button>
-    <div class="radial-menu__hole" aria-hidden="true"></div>
+    <button type="button" class="radial-menu__btn radial-menu__btn--link" data-radial="link">
+      <span class="radial-menu__btn-icon" aria-hidden="true">🔗</span>
+      <span>שיוך</span>
+    </button>
+    <div class="radial-menu__hole" id="radialMenuHole" aria-hidden="true"></div>
   </div>
+
+  </div><!-- /app-shell -->
+
+  <!-- Spacing panel — outside app-shell so clicks/touch aren't blocked -->
+  <div class="spacing-backdrop" id="spacingBackdrop" aria-hidden="true"></div>
+  <aside class="panel spacing-panel" id="spacingPanel" aria-label="מרווחים לקריאה / ייצוא" aria-hidden="true">
+    <div class="spacing-head">
+      <strong>מרווחים לקריאה / ייצוא</strong>
+      <button type="button" class="lib-close" id="spacingClose" aria-label="סגור">✕</button>
+    </div>
+    <div class="spacing-body">
+      <p class="spacing-live-hint">הזז סליידר — השרטוט מתעדכן מיד · גרור שורת bus או ● — מיקום ידני · ● תחתון — אורך מודול</p>
+      <p class="spacing-warn hidden" id="spacingNoSkeleton">אין עדיין מבנה קווים — לחץ למטה או בנה מ«פרטי גיליון»</p>
+      <button type="button" class="btn primary spacing-build-btn" id="spacingBuildBtn">בנה מבנה קווים</button>
+      <label class="range-field">
+        <span>מרווח בין מודולים <b id="s_widthPctVal">140%</b></span>
+        <input type="range" id="s_widthPct" min="80" max="200" value="140" />
+        <small>נקבע ב«בנה מבנה קווים» — לא ניתן לגרור מודולים אופקית</small>
+      </label>
+      <label class="range-field">
+        <span>אורך המודול <b id="s_stubLenVal">100px</b></span>
+        <input type="range" id="s_stubLen" min="56" max="220" value="100" />
+      </label>
+      <p class="spacing-preview" id="s_spacingPreview"></p>
+    </div>
+  </aside>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="conductor.js"></script>
@@ -418,8 +429,5 @@
 
   <script src="https://cdn.userway.org/widget.js" data-account="rQ0i20yJ6f"></script>
 
-  <div style="text-align: center; padding: 10px; margin-top: 20px;">
-    <a href="accessibility.html" style="color: #666; text-decoration: underline; font-size: 14px;">הצהרת נגישות</a>
-  </div>
 </body>
 </html>

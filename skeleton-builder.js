@@ -5,12 +5,12 @@
   "use strict";
 
   const ROW_TOP = 80;
-  const ROW_BOTTOM_PAD = 64;
+  const ROW_BOTTOM_PAD = 88;
   const DEFAULT_STUB = 100;
   const SYM_BOTTOM = 26;
   const SYM_TOP = 26;
   const LINK_DROP = 52;
-  const BRANCH_EXTRA = 34;
+  const BRANCH_EXTRA = 42;
   const chainStep = SYM_TOP + LINK_DROP + SYM_BOTTOM;
   const MIN_STUB = SYM_BOTTOM + SYM_TOP + BRANCH_EXTRA + 8;
   const SIDE_MARGIN = 72;
@@ -53,15 +53,31 @@
   }
 
   function calcSpacing(maxModules, area, widthPct) {
+    const M = Math.max(1, Number(maxModules) || 1);
     const scale = (Number(widthPct) || 140) / 100;
-    return snapX(Math.max(MIN_SPACING, FIXED_BRANCH_SPACING * scale));
+    const desired = Math.max(MIN_SPACING, FIXED_BRANCH_SPACING * scale);
+    const usable = Math.max(MIN_SPACING * 2, (area.x1 - area.x0) - SIDE_MARGIN * 2);
+    const cap = M <= 1 ? desired : snapX(usable / (M - 1));
+    return snapX(Math.min(desired, Math.max(MIN_SPACING, cap)));
   }
 
-  function centeredBranchXs(centerX, spacing, count) {
+  function centeredBranchXs(centerX, spacing, count, area) {
     const width = Math.max(0, (count - 1) * spacing);
-    const xStart = snapX(centerX - width / 2);
+    let xStart = snapX(centerX - width / 2);
     const xs = [];
     for (let j = 0; j < count; j++) xs.push(snapX(xStart + j * spacing));
+    if (area && count > 0) {
+      const minX = area.x0 + SIDE_MARGIN;
+      const maxX = area.x1 - SIDE_MARGIN;
+      if (xs[0] < minX) {
+        const shift = minX - xs[0];
+        for (let j = 0; j < count; j++) xs[j] = snapX(xs[j] + shift);
+      }
+      if (xs[xs.length - 1] > maxX) {
+        const shift = xs[xs.length - 1] - maxX;
+        for (let j = 0; j < count; j++) xs[j] = snapX(xs[j] - shift);
+      }
+    }
     return xs;
   }
 
@@ -159,7 +175,7 @@
       const i = rowOrder[oi];
       const M = rows[i].modules;
       const busY = rowBusY(i, busYs[i], rowBusYMap);
-      const defaultXs = centeredBranchXs(centerX, spacing, M);
+      const defaultXs = centeredBranchXs(centerX, spacing, M, area);
       const xs = [];
       for (let j = 0; j < M; j++) {
         xs.push(branchX(i, j, defaultXs[j], branchSlots));
@@ -239,7 +255,7 @@
           }));
         }
         const nextM = rows[nextRowIdx].modules;
-        const nextDefault = centeredBranchXs(centerX, spacing, nextM);
+        const nextDefault = centeredBranchXs(centerX, spacing, nextM, area);
         const nextXs = [];
         for (let j = 0; j < nextM; j++) {
           nextXs.push(branchX(nextRowIdx, j, nextDefault[j], branchSlots));
