@@ -19,6 +19,9 @@
   }
   const GRID = 20;
   const STORAGE_KEY = "draftsman.sld.v8";
+  const TERMS_KEY = "draftsman.sld.terms.v1";
+  const EXPORT_DISCLAIMER_HE = "לתכנון בלבד · חובה אימות על ידי חשמלאי מוסמך לפי תקן החשמל המקומי";
+  const EXPORT_DISCLAIMER_EN = "For planning purposes only. Must be verified by a licensed electrician according to local electrical codes.";
   const SKELETON_VERSION = 20;
   const MAX_CHAIN = 4;
   const MIN_SCALE = 0.2, MAX_SCALE = 8, HISTORY_LIMIT = 120;
@@ -109,6 +112,9 @@
     branchWireCross: $("branchWireCross"),
     wirePopup: $("wirePopup"), wirePopupHint: $("wirePopupHint"),
     wire_cross: $("wire_cross"), wireApplyBtn: $("wireApplyBtn"), wireClearBtn: $("wireClearBtn"),
+    termsOverlay: $("termsOverlay"), termsScroll: $("termsScroll"),
+    termsCheckbox: $("termsCheckbox"), termsAcceptBtn: $("termsAcceptBtn"),
+    termsScrollHint: $("termsScrollHint"),
   };
   let spacingLiveRaf = 0;
   let spacingPanelOpen = false;
@@ -2574,6 +2580,23 @@
     drawFrame(g, t);
     drawTitleBlock(g, t);
     drawBoardBadge(g, t);
+    if (opts && opts.exportWatermark) drawExportWatermark(g, t);
+  }
+
+  function drawExportWatermark(g, t) {
+    const y = PAPER.H - PAPER.band + 2;
+    const x0 = PAPER.band + 4;
+    const w = PAPER.W - (PAPER.band + 4) * 2;
+    const h = 30;
+    const p0 = w2s(x0, y, t);
+    const p1 = w2s(x0 + w, y + h, t);
+    g.fillStyle = "rgba(255, 248, 240, 0.98)";
+    g.fillRect(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+    g.strokeStyle = "#b45309";
+    g.lineWidth = Math.max(1, 1.4 * t.s);
+    g.strokeRect(p0.x + 0.5, p0.y + 0.5, p1.x - p0.x - 1, p1.y - p0.y - 1);
+    wtext(g, t, EXPORT_DISCLAIMER_HE, PAPER.W / 2, y + 10, 10, "center", "middle", "#7c2d12");
+    wtext(g, t, EXPORT_DISCLAIMER_EN, PAPER.W / 2, y + 22, 9, "center", "middle", "#92400e");
   }
 
   function drawGrid(g, t) {
@@ -3985,7 +4008,7 @@
     g.direction = "ltr"; g.lineCap = "round"; g.lineJoin = "round";
     g.fillStyle = "#fff";
     g.fillRect(0, 0, off.width, off.height);
-    drawSheet(g, { s: scale, ox: 0, oy: 0 }, { grid: false });
+    drawSheet(g, { s: scale, ox: 0, oy: 0 }, { grid: false, exportWatermark: true });
     return off;
   }
   function exportPDF() {
@@ -4027,7 +4050,7 @@
     const url = renderToImage(2).toDataURL("image/png");
     const w = window.open("", "_blank");
     if (!w) { toast("חלון ההדפסה נחסם"); return; }
-    w.document.write(`<html><head><title>${state.meta.title || "SLD"}</title><style>@page{size:landscape;margin:6mm}body{margin:0}img{width:100%;display:block}</style></head><body><img src="${url}" onload="window.print()"></body></html>`);
+    w.document.write(`<html><head><title>${state.meta.title || "SLD"}</title><style>@page{size:landscape;margin:6mm}body{margin:0;font-family:system-ui,sans-serif}img{width:100%;display:block}.disc{padding:8px 12px;text-align:center;font-size:11px;color:#7c2d12;background:#fff8f0;border-top:2px solid #b45309}</style></head><body><img src="${url}" onload="window.print()"><p class="disc">${EXPORT_DISCLAIMER_HE}<br>${EXPORT_DISCLAIMER_EN}</p></body></html>`);
     w.document.close();
   }
 
@@ -4087,7 +4110,8 @@
     if (ui.sheetModal && !ui.sheetModal.classList.contains("hidden")) updateSheetModuleStatus();
   }
   function modalOpen() {
-    return !ui.sheetModal.classList.contains("hidden");
+    return !ui.sheetModal.classList.contains("hidden") ||
+      document.body.classList.contains("terms-pending");
   }
 
   function populateBoardSelect() {
@@ -4120,6 +4144,82 @@
         el.crossSection = autoCrossSection(el);
       }
     }
+  }
+
+  function isTermsAccepted() {
+    try {
+      const raw = localStorage.getItem(TERMS_KEY);
+      if (!raw) return false;
+      const d = JSON.parse(raw);
+      return d && d.version === 1 && d.accepted === true;
+    } catch (e) { return false; }
+  }
+
+  function showTermsModal() {
+    if (!ui.termsOverlay) return;
+    document.body.classList.add("terms-pending");
+    ui.termsOverlay.classList.add("is-visible");
+    ui.termsOverlay.setAttribute("aria-hidden", "false");
+    if (ui.termsCheckbox) {
+      ui.termsCheckbox.checked = false;
+      ui.termsCheckbox.disabled = true;
+    }
+    if (ui.termsAcceptBtn) ui.termsAcceptBtn.disabled = true;
+    requestAnimationFrame(() => {
+      updateTermsScrollState();
+      ui.termsScroll?.focus();
+    });
+  }
+
+  function hideTermsModal() {
+    if (!ui.termsOverlay) return;
+    document.body.classList.remove("terms-pending");
+    ui.termsOverlay.classList.remove("is-visible");
+    ui.termsOverlay.setAttribute("aria-hidden", "true");
+  }
+
+  function termsScrollAtBottom() {
+    const el = ui.termsScroll;
+    if (!el) return true;
+    return el.scrollTop + el.clientHeight >= el.scrollHeight - 14;
+  }
+
+  function updateTermsScrollState() {
+    const el = ui.termsScroll;
+    if (!el || !ui.termsCheckbox) return;
+    const canAgree = termsScrollAtBottom() || el.scrollHeight <= el.clientHeight + 6;
+    ui.termsCheckbox.disabled = !canAgree;
+    if (ui.termsScrollHint) {
+      ui.termsScrollHint.classList.toggle("hidden", canAgree);
+    }
+    if (!canAgree && ui.termsCheckbox.checked) {
+      ui.termsCheckbox.checked = false;
+      if (ui.termsAcceptBtn) ui.termsAcceptBtn.disabled = true;
+    }
+  }
+
+  function acceptTerms() {
+    if (!ui.termsCheckbox?.checked) return;
+    try {
+      localStorage.setItem(TERMS_KEY, JSON.stringify({
+        version: 1,
+        accepted: true,
+        at: new Date().toISOString(),
+      }));
+    } catch (e) {}
+    hideTermsModal();
+    bootApp();
+  }
+
+  function wireTermsGate() {
+    ui.termsScroll?.addEventListener("scroll", updateTermsScrollState, { passive: true });
+    ui.termsCheckbox?.addEventListener("change", () => {
+      if (ui.termsAcceptBtn) ui.termsAcceptBtn.disabled = !ui.termsCheckbox.checked;
+    });
+    ui.termsAcceptBtn?.addEventListener("click", acceptTerms);
+    addEventListener("resize", () => {
+      if (document.body.classList.contains("terms-pending")) updateTermsScrollState();
+    });
   }
 
   function wireSpacingPanel() {
@@ -4429,6 +4529,15 @@
   function init() {
     buildLibrary();
     wireUI();
+    wireTermsGate();
+    if (!isTermsAccepted()) {
+      showTermsModal();
+      return;
+    }
+    bootApp();
+  }
+
+  function bootApp() {
     if (window.RadialMenu) {
       RadialMenu.init({ onAction: handleRadialAction });
     }

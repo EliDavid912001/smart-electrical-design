@@ -13,6 +13,37 @@
 </head>
 <body>
 
+  <!-- תנאי שימוש — חובה לפני שימוש ראשון -->
+  <div class="terms-overlay" id="termsOverlay" role="dialog" aria-modal="true"
+       aria-labelledby="termsTitle" aria-describedby="termsDesc" aria-hidden="true">
+    <div class="terms-modal">
+      <header class="terms-modal__head">
+        <h2 id="termsTitle">תנאי שימוש והצהרת אחריות</h2>
+        <p id="termsDesc" class="terms-modal__sub">יש לאשר לפני שימוש באפליקציה · כלי לחשמלאים מוסמכים בלבד</p>
+      </header>
+      <div class="terms-modal__scroll" id="termsScroll" tabindex="0" aria-label="טקסט תנאי השימוש">
+        <p><strong>1. כשירות מקצועית.</strong> האפליקציה «חשמלאי שרטט חכם» מיועדת לחשמלאים מוסמכים ולבעלי מקצוע מוסמכים בחשמל בלבד. אתה מצהיר שיש לך הכשרה ורישיון לתכנון וביצוע עבודות חשמל לפי הדין בישראל.</p>
+        <p><strong>2. כלי עזר בלבד.</strong> האפליקציה אינה מחליפה שיקול דעת מקצועי, חישוב הנדסי מלא, או אימות מול תקן ישראלי (ת"י 60364) ותקנות החשמל. כל שרטוט, חישוב שטח חתך, וייצוא PDF/PNG — <em>לצורכי תכנון בלבד</em>.</p>
+        <p><strong>3. הגבלת אחריות.</strong> במידה המרבית המותרת בדין, מפעיל האפליקציה לא יישא באחריות לנזק ישיר או עקיף הנובע מתכנון לקוי, טעויות בחישובים, הסתמכות על השרטוט, אי-התאמה לתקן, תקלות טכניות, או אובדן נתונים.</p>
+        <p><strong>4. אחריותך.</strong> האחריות הסופית לבדיקה, אימות, חתימה ואישור התוכנית לפני ביצוע בשטח — עליך בלבד.</p>
+        <p><strong>5. פרטיות.</strong> השרטוט נשמר מקומית בדפדפן (localStorage). אין העברה אוטומטית לשרת חיצוני.</p>
+        <p><strong>6. דין ושיפוט.</strong> על תנאים אלה יחולו <strong>דיני מדינת ישראל</strong>. סמכות שיפוט: בתי המשפט המוסמכים בישראל.</p>
+        <p class="terms-modal__full-link"><a href="terms.html" target="_blank" rel="noopener">תנאים מלאים בדף נפרד ↗</a></p>
+        <p class="terms-modal__legal-note">מסמך זה אינו ייעוץ משפטי. מומלץ להיוועץ בעורך דין לפני פרסום לציבור.</p>
+      </div>
+      <div class="terms-modal__foot">
+        <label class="terms-agree" id="termsAgreeLabel">
+          <input type="checkbox" id="termsCheckbox" disabled aria-describedby="termsScrollHint" />
+          <span>קראתי את התנאים ואני מסכים/ה</span>
+        </label>
+        <p class="terms-scroll-hint" id="termsScrollHint">גלול עד סוף הטקסט כדי לאפשר סימון</p>
+        <button type="button" class="btn primary terms-accept-btn" id="termsAcceptBtn" disabled>
+          אני מסכים/ה — כניסה לאפליקציה
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- מסך פתיחה יוקרתי -->
   <div id="splash-screen" class="splash-screen" aria-hidden="false">
     <div class="splash-content">
