@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <meta name="theme-color" content="#15181d" />
+  <meta name="theme-color" content="#080b10" />
   <meta name="description" content="חשמלאי שרטט חכם — תוכנית חד-קווית מקצועית ללוחות חשמל" />
   <link rel="icon" type="image/png" sizes="1024x1024" href="icon.png" />
   <link rel="apple-touch-icon" sizes="1024x1024" href="icon.png" />
@@ -116,45 +116,37 @@
     <canvas id="sheet" aria-label="גיליון שרטוט"></canvas>
   </div>
 
-  <!-- ===================== VIP TOP BAR (unified) ===================== -->
+  <!-- ===================== VIP TOP BAR ===================== -->
   <header class="vip-topbar" id="vipTopBar" aria-label="סרגל עליון">
     <div class="vip-topbar__main">
       <a class="vip-topbar__a11y" href="accessibility.html" title="הצהרת נגישות" aria-label="נגישות">♿</a>
-      <div class="vip-topbar__brand brand">
-        <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none"><path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" fill="currentColor"/></svg>
-        </span>
-        <div class="vip-topbar__titles">
-          <span class="brand-name">חשמלאי שרטט חכם</span>
-          <span class="vip-topbar__title" id="sheetTitleLabel">לוח חדש</span>
-        </div>
-      </div>
-
-      <div class="vip-topbar__chips">
-        <button class="chip chip--glass" id="boardChip" title="גודל לוח">
-          <span id="boardChipLabel">2 שורות · 24 מודולים</span>
-        </button>
-        <button class="chip chip--glass" id="sheetInfoBtn" title="פרטי גיליון / כותרת">
-          <span class="chip-caret" aria-hidden="true">✎</span>
-          <span>פרטי גיליון</span>
-        </button>
-        <button class="chip chip--glass" id="spacingBtn" type="button" title="מרווחים לקריאה / ייצוא">
-          <span>מרווחים</span>
-        </button>
-      </div>
-
-      <div class="vip-topbar__status" id="vipTopStatus" aria-label="מצב מודולים">
-        <span class="vip-topbar__status-icon" aria-hidden="true">⚡</span>
-        <span class="vip-topbar__status-count">
-          <span id="moduleCountUsed">0</span><span class="module-dashboard__slash">/</span><span id="moduleCountTotal">24</span>
-        </span>
-        <small>בשימוש</small>
-      </div>
+      <h1 class="vip-topbar__hero" id="sheetTitleLabel">מקור סמלים - לוח חשמל</h1>
     </div>
   </header>
 
-  <!-- ===================== FILE DOCK (שמאל) ===================== -->
-  <div class="panel dock dock--side actions" id="actions" aria-label="קובץ וייצוא">
+  <!-- ===================== NAV DOCK (שמאל — פעולות) ===================== -->
+  <nav class="panel dock dock--nav" id="navDock" aria-label="ניווט ופרויקט">
+    <button class="dock-btn nav" id="libOpenBtn" type="button" title="מקור סמלים" aria-label="ספריית סמלים">
+      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
+      <span class="dock-btn__label">סמלים</span>
+    </button>
+    <div class="dock-sep" aria-hidden="true"></div>
+    <button class="dock-btn nav" id="boardChip" title="גודל לוח">
+      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 12h8M8 15h5"/></svg></span>
+      <span class="dock-btn__label" id="boardChipLabel">לוח</span>
+    </button>
+    <button class="dock-btn nav" id="sheetInfoBtn" title="פרטי גיליון / כותרת" aria-label="פרטי גיליון">
+      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>
+      <span class="dock-btn__label">גיליון</span>
+    </button>
+    <button class="dock-btn nav" id="spacingBtn" type="button" title="מרווחים לקריאה / ייצוא" aria-label="מרווחים">
+      <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h16"/></svg></span>
+      <span class="dock-btn__label">מרווחים</span>
+    </button>
+  </nav>
+
+  <!-- ===================== OUTPUT DOCK (ימין — ייצוא) ===================== -->
+  <div class="panel dock dock--output actions" id="actions" aria-label="ייצוא ופעולות">
     <button class="dock-btn icon-btn" id="undoBtn" title="ביטול (Ctrl+Z)" aria-label="ביטול">
       <span class="dock-btn__icon"><svg viewBox="0 0 24 24"><path d="M9 7L4 12l5 5M4 12h11a5 5 0 0 1 0 10h-1"/></svg></span>
       <span class="dock-btn__label">ביטול</span>
@@ -209,16 +201,6 @@
       <span class="dock-btn__label">מרכז</span>
     </button>
   </nav>
-
-  <!-- ===================== SYMBOL LIBRARY (the "folder") ===================== -->
-  <aside class="panel library hidden" id="library" aria-label="סמלי לוח">
-    <div class="library-head">
-      <strong>סמלי לוח</strong>
-      <button class="lib-close" id="libClose" aria-label="סגור">✕</button>
-    </div>
-    <div class="library-body" id="libBody"><!-- built by app.js --></div>
-    <div class="library-hint" id="libHint">לחיצה כפולה על מודול — בחר סמל מהרשימה</div>
-  </aside>
 
   <!-- Empty-sheet hint -->
   <button class="empty-hint" id="emptyHint">
@@ -290,8 +272,17 @@
     </div>
   </div>
 
-  <!-- Symbol edit panel + library (non-blocking) -->
-  <aside class="panel sym-edit-panel hidden" id="symEditPanel" aria-label="עריכת רכיב">
+  <!-- Inline text/label editor -->
+  <input id="textInput" class="text-input" type="text" autocomplete="off"
+         autocapitalize="off" spellcheck="false" placeholder="טקסט… (Enter)" />
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  </div><!-- /app-shell -->
+
+  <!-- Symbol edit + floating popups — outside app-shell so clicks aren't blocked -->
+  <div class="sym-edit-backdrop hidden" id="symEditBackdrop" aria-hidden="true"></div>
+  <aside class="panel sym-edit-panel hidden" id="symEditPanel" role="dialog" aria-modal="true" aria-label="עריכת רכיב">
     <div class="sym-edit-head">
       <strong id="symEditTitle">עריכת רכיב</strong>
       <button type="button" class="lib-close" id="symEditClose" aria-label="סגור">✕</button>
@@ -301,6 +292,10 @@
     <div id="symEditRating" class="sym-step">
       <div class="row sym-rating-row">
         <label class="field">
+          <span>זרם מא"ז [A]</span>
+          <select id="sym_rating"></select>
+        </label>
+        <label class="field">
           <span>דירוג (C/B/D)</span>
           <select id="sym_curve">
             <option value="C">C</option>
@@ -308,24 +303,20 @@
             <option value="D">D</option>
           </select>
         </label>
-        <label class="field">
-          <span>זרם מא"ז [A]</span>
-          <select id="sym_rating"></select>
-        </label>
       </div>
       <div class="row">
-        <label class="field">
-          <span>חומר מוליך</span>
-          <select id="sym_material">
-            <option value="cu">נחושת</option>
-            <option value="al">אלומיניום</option>
-          </select>
-        </label>
         <label class="field">
           <span>מעגל</span>
           <select id="sym_phase">
             <option value="1p">חד-מופעי</option>
             <option value="3p">תלת-מופעי</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>חומר מוליך</span>
+          <select id="sym_material">
+            <option value="cu">נחושת</option>
+            <option value="al">אלומיניום</option>
           </select>
         </label>
       </div>
@@ -338,17 +329,13 @@
       <span>שם המעגל</span>
       <input id="sym_desc" placeholder='למשל: מזגן סלון' autocomplete="off" />
     </label>
-    <p class="sym-hint">לחץ על סמל — עריכה · «מחק סמל זה בלבד» — מחיקה בודדת בשרשרת</p>
+    <p class="sym-hint hidden" aria-hidden="true">לחץ על סמל — עריכה · «מחק סמל זה בלבד» — מחיקה בודדת בשרשרת</p>
     </div>
     <div class="sym-edit-actions">
       <button type="button" class="btn danger" id="symEditDelete">🗑 מחק</button>
       <button type="button" class="btn primary" id="symEditApply">החל שינויים</button>
     </div>
   </aside>
-
-  <!-- Inline text/label editor -->
-  <input id="textInput" class="text-input" type="text" autocomplete="off"
-         autocapitalize="off" spellcheck="false" placeholder="טקסט… (Enter)" />
 
   <div class="feed-popup hidden" id="feedPopup" role="menu" aria-label="קו הזנה">
     <span class="feed-popup-title">כיוון הזנה</span>
@@ -369,13 +356,17 @@
   <div class="feed-popup branch-popup module-popup hidden" id="branchPopup" role="dialog" aria-label="מודול">
     <span class="feed-popup-title">מודול</span>
     <p class="branch-popup-hint module-popup-hint" id="branchPopupHint">
-      <strong>לחיצה כפולה</strong> על מודול — הוסף סמל או מחק
+      <strong>לחיצה כפולה</strong> על מודול — הוסף / החלף סמל · לחיצה אחת — תפריט
     </p>
     <label class="field wire-cross-field">
       <span>שטח חתך ענף [mm²]</span>
       <select id="branchWireCross"></select>
     </label>
     <button type="button" id="branchAddBtn">בחר סמל מהרשימה</button>
+    <button type="button" id="branchEditBtn" class="hidden">ערוך רכיב</button>
+    <div class="branch-popup-picker hidden" id="branchPopupPicker" aria-label="רשימת סמלים">
+      <div class="branch-popup-picker-grid" id="branchPopupPickerGrid"></div>
+    </div>
     <button type="button" id="branchChainBtn" class="hidden">הוסף סמל לשרשרת</button>
     <button type="button" class="danger-text" id="branchClearSymBtn">מחק סמל (השאר ענף)</button>
     <button type="button" class="danger-text" id="branchDeleteBtn">מחק מודול מהלוח</button>
@@ -399,9 +390,7 @@
     <button type="button" class="danger-text" id="wireClearBtn">מחק שטח חתך</button>
   </div>
 
-  <div class="toast" id="toast" role="status" aria-live="polite"></div>
-
-  <!-- VIP radial context menu (symbol selected) -->
+  <!-- VIP radial context menu — outside app-shell so clicks aren't blocked -->
   <div class="radial-menu hidden" id="radialMenu" role="menu" aria-label="פעולות על רכיב" aria-hidden="true">
     <div class="radial-menu__dim" aria-hidden="true"></div>
     <div class="radial-menu__ring" aria-hidden="true"></div>
@@ -424,7 +413,15 @@
     <div class="radial-menu__hole" id="radialMenuHole" aria-hidden="true"></div>
   </div>
 
-  </div><!-- /app-shell -->
+  <!-- Symbol library — side panel, no blocking overlay -->
+  <aside class="panel library hidden" id="library" aria-label="מקור סמלים">
+    <div class="library-head">
+      <strong>מקור סמלים - לוח חשמל</strong>
+      <button class="lib-close" id="libClose" aria-label="סגור">✕</button>
+    </div>
+    <div class="library-body" id="libBody"><!-- built by app.js --></div>
+    <div class="library-hint" id="libHint">גלול לרשימה · לחיצה אחת על סמל להוספה</div>
+  </aside>
 
   <!-- Spacing panel — outside app-shell so clicks/touch aren't blocked -->
   <div class="spacing-backdrop" id="spacingBackdrop" aria-hidden="true"></div>
@@ -434,7 +431,7 @@
       <button type="button" class="lib-close" id="spacingClose" aria-label="סגור">✕</button>
     </div>
     <div class="spacing-body">
-      <p class="spacing-live-hint">הזז סליידר — השרטוט מתעדכן מיד · גרור שורת bus או ● — מיקום ידני · ● תחתון — אורך מודול</p>
+      <p class="spacing-live-hint">הזז סליידר — השרטוט מתעדכן מיד · גרור קו זהב (ענף) — שמאלה/ימינה/למעלה/מטה · מודולים כחולים — רק כאן</p>
       <p class="spacing-warn hidden" id="spacingNoSkeleton">אין עדיין מבנה קווים — לחץ למטה או בנה מ«פרטי גיליון»</p>
       <button type="button" class="btn primary spacing-build-btn" id="spacingBuildBtn">בנה מבנה קווים</button>
       <label class="range-field">

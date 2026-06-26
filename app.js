@@ -20,15 +20,17 @@
   const GRID = 20;
   const STORAGE_KEY = "draftsman.sld.v8";
   const TERMS_KEY = "draftsman.sld.terms.v1";
-  const EXPORT_DISCLAIMER_HE = "לתכנון בלבד · חובה אימות על ידי חשמלאי מוסמך לפי תקן החשמל המקומי";
-  const EXPORT_DISCLAIMER_EN = "For planning purposes only. Must be verified by a licensed electrician according to local electrical codes.";
+  const EXPORT_DISCLAIMER_HE = "לצרכי תכנון בלבד. חובה לאשר מול חשמלאי מוסמך.";
+  const EXPORT_DISCLAIMER_EN = "For planning purposes only. Must be approved by a licensed electrician.";
   const SKELETON_VERSION = 20;
   const MAX_CHAIN = 4;
   const MIN_SCALE = 0.2, MAX_SCALE = 8, HISTORY_LIMIT = 120;
   const DRAG_THRESHOLD = 6;
+  const BRANCH_DRAG_THRESHOLD = 3;
 
   const SYMBOLS = PanelSymbols.build();
   const CATS = PanelSymbols.CATS;
+  const LIB_GROUPS = PanelSymbols.LIB_GROUPS || CATS.map(([cat, title]) => ({ title, cats: [cat] }));
 
   const state = {
     meta: {
@@ -69,10 +71,10 @@
   const ui = {
     tools: $("tools"), rotateBtn: $("rotateBtn"), delBtn: $("delBtn"), fitViewBtn: $("fitViewBtn"),
     undo: $("undoBtn"), redo: $("redoBtn"), exportBtn: $("exportBtn"), exportPdfBtn: $("exportPdfBtn"), printBtn: $("printBtn"),
+    libOpenBtn: $("libOpenBtn"), libraryBackdrop: $("libraryBackdrop"),
     libToggle: $("libToggle"), library: $("library"), libBody: $("libBody"),
     libClose: $("libClose"), libHint: $("libHint"),
     boardChip: $("boardChip"), boardChipLabel: $("boardChipLabel"),
-    moduleCountUsed: $("moduleCountUsed"), moduleCountTotal: $("moduleCountTotal"),
     sheetInfoBtn: $("sheetInfoBtn"), sheetTitleLabel: $("sheetTitleLabel"),
     spacingBtn: $("spacingBtn"), spacingPanel: $("spacingPanel"), spacingClose: $("spacingClose"),
     spacingBackdrop: $("spacingBackdrop"),
@@ -92,7 +94,7 @@
     welcomeStart: $("welcomeStart"), welcomeContinue: $("welcomeContinue"),
     welcomeBoardHint: $("welcomeBoardHint"),
     splashScreen: $("splash-screen"), startAppBtn: $("start-app-btn"),
-    symEditPanel: $("symEditPanel"), symEditTitle: $("symEditTitle"), symEditName: $("symEditName"),
+    symEditPanel: $("symEditPanel"), symEditBackdrop: $("symEditBackdrop"), symEditTitle: $("symEditTitle"), symEditName: $("symEditName"),
     symEditClose: $("symEditClose"), symEditDelete: $("symEditDelete"), symEditApply: $("symEditApply"),
     symEditRating: $("symEditRating"),
     sym_curve: $("sym_curve"), sym_rating: $("sym_rating"),
@@ -102,6 +104,9 @@
     branchPopup: $("branchPopup"),
     branchPopupHint: $("branchPopupHint"),
     branchAddBtn: $("branchAddBtn"),
+    branchEditBtn: $("branchEditBtn"),
+    branchPopupPicker: $("branchPopupPicker"),
+    branchPopupPickerGrid: $("branchPopupPickerGrid"),
     branchChainBtn: $("branchChainBtn"),
     branchClearSymBtn: $("branchClearSymBtn"),
     branchDeleteBtn: $("branchDeleteBtn"),
@@ -133,7 +138,30 @@
   let inputIsTouch = false;
   let lastModuleTap = { time: 0, sx: 0, sy: 0, slotKey: null };
   let lastSkLineTap = { time: 0, sx: 0, sy: 0, skId: null };
-  const MODULE_TAP_MS = 450;
+  const MODULE_TAP_MS = 800;
+  const SYM_RADIAL_DELAY_MS = 550;
+  const MODULE_CLICK_SLOP = 14;
+  let symRadialTimer = null;
+  let suppressRadialUntil = 0;
+
+  function cancelSymRadialTimer() {
+    if (symRadialTimer) {
+      clearTimeout(symRadialTimer);
+      symRadialTimer = null;
+    }
+  }
+
+  function scheduleSymRadial(el, sx, sy) {
+    cancelSymRadialTimer();
+    if (!el) return;
+    const symId = el.id;
+    symRadialTimer = setTimeout(() => {
+      symRadialTimer = null;
+      if (Date.now() < suppressRadialUntil) return;
+      const live = state.elements.find((e) => e.id === symId);
+      if (live) presentSymActions(live, sx, sy);
+    }, SYM_RADIAL_DELAY_MS);
+  }
 
   function isCoarsePointer() {
     return window.matchMedia("(pointer: coarse)").matches || window.matchMedia("(hover: none)").matches;
@@ -144,41 +172,138 @@
   }
 
   function moduleHitPad() {
-    return (useModuleTapUX() || innerWidth <= 768) ? 28 : 16;
+    return (useModuleTapUX() || innerWidth <= 768) ? 32 : 24;
   }
 
-  function beginModuleTap(sx, sy, w, skId, slotKey) {
-    moduleTapPointer = { sx, sy, wx: w.x, wy: w.y, skId, slotKey, moved: false };
+  function beginModuleTap(sx, sy, w, skId, slotKey, opts) {
+    moduleTapPointer = {
+      sx, sy, wx: w.x, wy: w.y,
+      skId: skId || null,
+      slotKey,
+      moved: false,
+      dragEnabled: !(opts && opts.noDrag),
+    };
     state.selectedId = null;
     selectedBranchKey = null;
     render();
     syncUI();
   }
 
-  function finishModuleTap(sx, sy) {
-    const w = s2w(sx, sy);
+  function beginBusRowTap(sx, sy, w, row) {
+    moduleTapPointer = {
+      sx, sy, wx: w.x, wy: w.y,
+      skId: "bus-" + row,
+      slotKey: null,
+      row,
+      moved: false,
+      dragEnabled: true,
+    };
+    state.selectedId = null;
+    selectedBranchKey = null;
+    selectedSkLineId = "bus-" + row;
+    render();
+    syncUI();
+  }
+
+  function rowFromSlotKey(slotKey) {
+    if (!slotKey) return null;
+    const r = Number(String(slotKey).split("-")[0]);
+    return Number.isFinite(r) ? r : null;
+  }
+
+  function isRowBusSkId(skId) {
+    return !!(skId && skId.startsWith("bus-"));
+  }
+
+  function selectModuleAtPointer(ptr) {
+    if (!ptr) return;
+    const w = s2w(ptr.sx, ptr.sy);
     const hitSym = symAt(w.x, w.y);
     if (hitSym && hitSym.slotKey) {
-      presentSymActions(hitSym, sx, sy);
-      return true;
+      state.selectedId = hitSym.id;
+      selectedBranchKey = hitSym.slotKey;
+      render();
+      syncUI();
+      return;
     }
-    const slotKey = resolveModuleSlotAt(w.x, w.y);
-    if (!slotKey) return false;
+    const slotKey = ptr.slotKey || resolveModuleSlotAt(w.x, w.y);
+    if (!slotKey) return;
+    selectedBranchKey = slotKey;
+    const syms = symsOnSlot(slotKey);
+    state.selectedId = syms.length ? syms[0].id : null;
+    hideBranchPopup();
+    render();
+    syncUI();
+  }
 
-    const now = Date.now();
-    const isDouble =
-      lastModuleTap.slotKey === slotKey &&
-      now - lastModuleTap.time <= MODULE_TAP_MS &&
-      Math.hypot(sx - lastModuleTap.sx, sy - lastModuleTap.sy) < 44;
-
-    if (useModuleTapUX() || isDouble) {
-      openModuleOnDblClick(sx, sy, w);
-      lastModuleTap.time = 0;
-      return true;
+  function openModulePopup(sx, sy, w, opts) {
+    if (!state.meta.skeletonBuilt) {
+      toast("קודם בנה מבנה קווים — «בנה מבנה קווים» בפרטי גיליון");
+      return false;
     }
+    const slotKey = (opts && opts.slotKey) || resolveModuleSlotAt(w.x, w.y);
+    if (!slotKey) {
+      toast("לא זוהה מודול — לחץ על הקו הכחול או על הסמל");
+      return false;
+    }
+    const chainMode = !!(opts && opts.chainMode) || !!skeletonTerminalAt(w.x, w.y);
+    showBranchPopup(sx, sy, slotKey, { chainMode });
+    return true;
+  }
 
-    lastModuleTap = { time: now, sx, sy, slotKey };
-    return false;
+  /** לחיצה על מודול — חלון מודול (ריק) או עריכת רכיב (עם סמל) */
+  function handleModuleClick(sx, sy, w, slotKey) {
+    cancelSymRadialTimer();
+    suppressRadialUntil = Date.now() + MODULE_TAP_MS;
+    symPointer = null;
+    moduleTapPointer = null;
+    if (!state.meta.skeletonBuilt) {
+      toast("קודם בנה מבנה קווים — «בנה מבנה קווים» בפרטי גיליון");
+      return false;
+    }
+    const key = slotKey || resolveModuleSlotAtClick(w.x, w.y);
+    if (!key) {
+      toast("לא זוהה מודול — לחץ על הקו הכחול");
+      return false;
+    }
+    const syms = symsOnSlot(key);
+    const chainMode = !!skeletonTerminalAt(w.x, w.y);
+    const hitSym = symAt(w.x, w.y);
+    selectedBranchKey = key;
+    branchPopupEditSymId = (hitSym && hitSym.slotKey === key)
+      ? hitSym.id
+      : (syms.length ? syms[0].id : null);
+    showBranchPopup(sx, sy, key, { chainMode });
+    return true;
+  }
+
+  function handleModuleDoubleClick(sx, sy, w, slotKey) {
+    return handleModuleClick(sx, sy, w, slotKey);
+  }
+
+  function resolveModuleSlotAtClick(wx, wy) {
+    const hitSym = symAt(wx, wy);
+    if (hitSym && hitSym.slotKey) return hitSym.slotKey;
+    return resolveModuleSlotAt(wx, wy);
+  }
+
+  function canDeleteModule(slotKey) {
+    const slot = findSlotByKey(slotKey);
+    if (!slot) return false;
+    const row = state.meta.rowLayout[slot.row];
+    return !!(row && row.modules > 1);
+  }
+
+  function finishModuleTap(sx, sy) {
+    const w = s2w(sx, sy);
+    if (useModuleTapUX()) {
+      const hitSym = symAt(w.x, w.y);
+      if (hitSym && hitSym.slotKey) {
+        presentSymActions(hitSym, sx, sy);
+        return true;
+      }
+    }
+    return openModulePopup(sx, sy, w);
   }
 
   function skLineHitDist(skKind) {
@@ -202,24 +327,15 @@
   function finishSkLineTap(sx, sy) {
     if (!skLineTapPointer) return false;
     const meta = skLineTapPointer.meta;
-    const now = Date.now();
-    const isDouble =
-      lastSkLineTap.skId === meta.skId &&
-      now - lastSkLineTap.time <= MODULE_TAP_MS &&
-      Math.hypot(sx - lastSkLineTap.sx, sy - lastSkLineTap.sy) < 44;
-
-    if (useModuleTapUX() || isDouble) {
-      openSkLineClickMenu(meta);
-      lastSkLineTap.time = 0;
-      return true;
-    }
-
-    lastSkLineTap = { time: now, sx, sy, skId: meta.skId };
-    return false;
+    openSkLineClickMenu(meta);
+    lastSkLineTap.time = 0;
+    return true;
   }
   let skPointer = null;
-  let branchPlaceSlot = null;
+  let branchDragHintShown = false;
   let branchPlaceChainIdx = 0;
+  let branchPlaceSlot = null;
+  let pendingPlaceSlot = null;
   let selectedWireSkId = null;
   let lastPointer = { sx: 0, sy: 0 };
 
@@ -284,6 +400,7 @@
           state.meta.branchSlots.push(hit);
         } else {
           hit.x = xs[j];
+          hit.userBranchX = false;
         }
       }
     });
@@ -295,17 +412,20 @@
   }
 
   function applySpacingOptsLive() {
-    syncSkeletonOptsLabels();
-    state.meta.skeletonOpts = readSkeletonOptsFromUI();
-    if (!state.meta.skeletonBuilt || !hasSkeletonLines()) return;
-    const prev = state.meta.skeletonOpts || BoardSkeleton.defaultOpts();
+    if (!state.meta.skeletonBuilt || !hasSkeletonLines()) {
+      syncSkeletonOptsLabels();
+      return;
+    }
+    const prev = Object.assign({}, state.meta.skeletonOpts || BoardSkeleton.defaultOpts());
     const next = readSkeletonOptsFromUI();
+    syncSkeletonOptsLabels();
     state.meta.skeletonOpts = next;
-    if (prev.widthPct !== next.widthPct) recalcBranchSlotsFromSpacing();
+    if (Number(prev.widthPct) !== Number(next.widthPct)) recalcBranchSlotsFromSpacing();
     if (spacingLiveRaf) cancelAnimationFrame(spacingLiveRaf);
     spacingLiveRaf = requestAnimationFrame(() => {
       spacingLiveRaf = 0;
       rebuildSkeleton(false, true);
+      render();
     });
   }
 
@@ -535,6 +655,29 @@
   function hideBranchPopup() {
     if (!ui.branchPopup) return;
     ui.branchPopup.classList.add("hidden");
+    delete ui.branchPopup.dataset.slotKey;
+    if (ui.branchPopupPicker) ui.branchPopupPicker.classList.add("hidden");
+    branchPickMode = "new";
+    branchPopupEditSymId = null;
+  }
+
+  function ensureBranchPopupVisible(slotKey) {
+    if (!ui.branchPopup || ui.branchPopup.classList.contains("hidden")) {
+      showBranchPopup(lastPointer.sx, lastPointer.sy, slotKey, {
+        chainMode: modulePopupChainMode,
+      });
+    }
+  }
+
+  function openInlineSymbolPicker(slotKey, chainIdx, hint) {
+    ensureBranchPopupVisible(slotKey);
+    selectedBranchKey = slotKey;
+    setPendingPlace(slotKey, chainIdx);
+    hideLibrary();
+    hideTerminalPopup();
+    closeSymEdit();
+    toggleBranchPopupPicker(true);
+    if (hint) toast(hint);
   }
 
   function hideTerminalPopup() {
@@ -558,8 +701,8 @@
       ui.terminalAddBtn.disabled = syms.length >= MAX_CHAIN;
     }
     ui.terminalPopup.classList.remove("hidden");
-    ui.terminalPopup.style.left = clamp(sx, 8, innerWidth - 220) + "px";
-    ui.terminalPopup.style.top = clamp(sy, 8, innerHeight - 140) + "px";
+    ui.terminalPopup.dataset.slotKey = slotKey;
+    placeFloatingPopup(ui.terminalPopup, sx, sy, 220, 140);
     syncUI();
   }
 
@@ -621,60 +764,208 @@
     }
   }
 
+  function syncLibraryBackdrop() {
+    if (ui.libraryBackdrop) {
+      ui.libraryBackdrop.classList.add("hidden");
+      ui.libraryBackdrop.classList.remove("is-open");
+    }
+    const open = ui.library && !ui.library.classList.contains("hidden");
+    if (ui.libOpenBtn) ui.libOpenBtn.classList.toggle("is-active", !!open);
+  }
+
+  function clearPendingPlace() {
+    pendingPlaceSlot = null;
+    branchPlaceSlot = null;
+    branchPlaceChainIdx = 0;
+  }
+
+  function setPendingPlace(slotKey, chainIdx) {
+    const idx = chainIdx != null ? chainIdx : 0;
+    pendingPlaceSlot = { slotKey, chainIdx: idx };
+    branchPlaceSlot = slotKey;
+    branchPlaceChainIdx = idx;
+  }
+
+  function resolvePlaceTarget() {
+    if (pendingPlaceSlot && pendingPlaceSlot.slotKey) return pendingPlaceSlot;
+    if (branchPlaceSlot) return { slotKey: branchPlaceSlot, chainIdx: branchPlaceChainIdx || 0 };
+    if (selectedBranchKey) return { slotKey: selectedBranchKey, chainIdx: 0 };
+    return null;
+  }
+
   function hideLibrary() {
     if (!ui.library) return;
     ui.library.classList.add("hidden");
     ui.library.classList.remove("library--picker");
-    branchPlaceSlot = null;
-    branchPlaceChainIdx = 0;
-    disarm();
+    clearPendingPlace();
+    syncLibraryBackdrop();
     syncUI();
   }
 
-  function showLibraryForSlot(slotKey, chainIdx, hint) {
-    branchPlaceSlot = slotKey;
-    branchPlaceChainIdx = chainIdx != null ? chainIdx : 0;
+  function showLibraryForSlot(slotKey, chainIdx, hint, opts) {
+    setPendingPlace(slotKey, chainIdx);
     selectedBranchKey = slotKey;
-    hideBranchPopup();
+    if (!(opts && opts.keepModulePopup)) hideBranchPopup();
     hideTerminalPopup();
-    closeSymEdit();
-    ui.library.classList.remove("hidden");
-    if (useModuleTapUX() || innerWidth <= 768) {
-      ui.library.classList.add("library--picker");
-    } else {
-      ui.library.classList.remove("library--picker");
+    if (!(opts && opts.keepSymEdit)) closeSymEdit();
+    if (ui.library) {
+      ui.library.classList.remove("hidden");
+      ui.library.classList.toggle("library--picker", !!(opts && opts.pickerMode));
     }
-    ui.libHint.textContent = hint || "בחר סמל — לחיצה כפולה על מודול לפתיחה";
-    disarm();
+    if (ui.libHint) {
+      ui.libHint.textContent = hint || "לחץ על סמל — יתווסף למודול";
+    }
+    syncLibraryBackdrop();
+    syncUI();
+    render();
+    requestAnimationFrame(() => {
+      if (ui.libBody) ui.libBody.scrollTop = 0;
+    });
+  }
+
+  function toggleLibrary() {
+    if (!ui.library) return;
+    const opening = ui.library.classList.contains("hidden");
+    if (opening && !state.meta.skeletonBuilt) {
+      toast("קודם בנה מבנה קווים — «בנה מבנה קווים» בפרטי גיליון");
+      return;
+    }
+    ui.library.classList.toggle("hidden");
+    if (!opening) {
+      ui.library.classList.remove("library--picker");
+      clearPendingPlace();
+      disarm();
+    } else {
+      ui.libHint.textContent = "לחץ על מודול · אחר כך לחץ על סמל";
+      requestAnimationFrame(() => {
+        if (ui.libBody) ui.libBody.scrollTop = 0;
+      });
+    }
+    syncLibraryBackdrop();
     syncUI();
   }
 
   let modulePopupChainMode = false;
+  let branchPickMode = "new";
+  let branchPopupEditSymId = null;
+  let branchPopupAnchor = { sx: 0, sy: 0 };
+
+  function repositionBranchPopup() {
+    if (!ui.branchPopup || ui.branchPopup.classList.contains("hidden")) return;
+    const pickerOpen = ui.branchPopupPicker && !ui.branchPopupPicker.classList.contains("hidden");
+    const popW = pickerOpen ? Math.min(400, innerWidth - 16) : 220;
+    const popH = pickerOpen ? Math.min(560, innerHeight - 16) : 220;
+    placeFloatingPopup(ui.branchPopup, branchPopupAnchor.sx, branchPopupAnchor.sy, popW, popH);
+    ui.branchPopup.style.maxHeight = popH + "px";
+    ui.branchPopup.style.overflowY = pickerOpen ? "auto" : "";
+  }
+
+  function createLibItem(id, onPick) {
+    const sym = SYMBOLS[id];
+    if (!sym) return null;
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "lib-item";
+    item.dataset.sym = id;
+    item.title = sym.code ? sym.code : sym.name;
+    const c = document.createElement("canvas");
+    c.width = 56;
+    c.height = 56;
+    drawPreview(c, id);
+    const lbl = document.createElement("span");
+    lbl.textContent = sym.name;
+    item.appendChild(c);
+    item.appendChild(lbl);
+    const pick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (onPick) onPick(id, item);
+      else pickSymbolFromLibrary(id, item);
+    };
+    item.addEventListener("click", pick);
+    item.addEventListener("touchend", pick, { passive: false });
+    return item;
+  }
+
+  function buildBranchPopupPicker() {
+    if (!ui.branchPopupPickerGrid) return;
+    if (ui.branchPopupPickerGrid.dataset.built === "3") return;
+    ui.branchPopupPickerGrid.innerHTML = "";
+    ui.branchPopupPickerGrid.dataset.built = "3";
+    ui.branchPopupPickerGrid.className = "branch-popup-picker-body";
+    const seen = new Set();
+    for (const group of LIB_GROUPS) {
+      const sec = document.createElement("div");
+      sec.className = "lib-section";
+      const h = document.createElement("div");
+      h.className = "lib-section-title";
+      h.textContent = group.title;
+      sec.appendChild(h);
+      const grid = document.createElement("div");
+      grid.className = "lib-grid";
+      for (const id of Object.keys(SYMBOLS)) {
+        const sym = SYMBOLS[id];
+        if (!group.cats.includes(sym.cat) || seen.has(id)) continue;
+        seen.add(id);
+        const item = createLibItem(id);
+        if (item) grid.appendChild(item);
+      }
+      if (grid.children.length) {
+        sec.appendChild(grid);
+        ui.branchPopupPickerGrid.appendChild(sec);
+      }
+    }
+  }
+
+  function toggleBranchPopupPicker(show) {
+    if (!ui.branchPopupPicker) return false;
+    buildBranchPopupPicker();
+    const open = show != null ? show : ui.branchPopupPicker.classList.contains("hidden");
+    ui.branchPopupPicker.classList.toggle("hidden", !open);
+    const key = branchPopupSlotKey();
+    const sym = key ? symsOnSlot(key)[0] : null;
+    if (ui.branchAddBtn) {
+      ui.branchAddBtn.textContent = open
+        ? "סגור רשימת סמלים"
+        : (sym ? "בחר / החלף סמל" : "בחר סמל מהרשימה");
+    }
+    repositionBranchPopup();
+    return open;
+  }
 
   function showBranchPopup(sx, sy, slotKey, opts) {
     if (!ui.branchPopup) return;
+    cancelSymRadialTimer();
+    if (window.RadialMenu) RadialMenu.hide();
+    closeSymEdit();
     selectedBranchKey = slotKey;
     modulePopupChainMode = !!(opts && opts.chainMode);
     const syms = symsOnSlot(slotKey);
     const sym = syms[0];
-    const tapHint = useModuleTapUX() ? "הקשה על מודול" : "לחיצה כפולה על מודול";
+    const deletable = canDeleteModule(slotKey);
+    const tapHint = useModuleTapUX() ? "הקשה על מודול" : "לחיצה על מודול";
     if (ui.branchPopupHint) {
       if (modulePopupChainMode && syms.length) {
         ui.branchPopupHint.innerHTML =
-          "<strong>" + tapHint + "</strong> — הוסף סמל לשרשרת או מחק";
+          "<strong>" + tapHint + "</strong> — «הוסף לשרשרת» או מחק סמלים";
       } else if (!syms.length) {
         ui.branchPopupHint.innerHTML =
-          "מודול ריק · «בחר סמל» או «מחק מודול»";
+          "מודול ריק · לחץ «בחר סמל מהרשימה» — הרשימה תיפתח כאן" +
+          (deletable ? " · או «מחק מודול»" : " · (מודול אחרון בשורה — לא ניתן למחוק)");
       } else if (syms.length > 1) {
         ui.branchPopupHint.innerHTML =
-          syms.length + " סמלים בשרשרת · החלף / הוסף / מחק";
+          syms.length + " סמלים בשרשרת · «ערוך» · «הוסף לשרשרת» · «החלף»";
       } else {
         ui.branchPopupHint.innerHTML =
-          "«בחר סמל» · «מחק סמלים» · «מחק מודול»";
+          "«ערוך רכיב» · «הוסף סמל לשרשרת» · «החלף סמל»" +
+          (deletable ? " · «מחק מודול»" : "");
       }
     }
     if (ui.branchAddBtn) {
-      ui.branchAddBtn.textContent = sym ? "בחר / החלף סמל" : "בחר סמל מהרשימה";
+      ui.branchAddBtn.textContent = sym ? "החלף סמל" : "בחר סמל מהרשימה";
+    }
+    if (ui.branchEditBtn) {
+      ui.branchEditBtn.classList.toggle("hidden", !syms.length);
     }
     if (ui.branchChainBtn) {
       const showChain = syms.length > 0 && syms.length < MAX_CHAIN;
@@ -684,45 +975,131 @@
     if (ui.branchClearSymBtn) {
       ui.branchClearSymBtn.classList.toggle("hidden", !syms.length);
       ui.branchClearSymBtn.textContent = syms.length > 1
-        ? "מחק את כל הסמלים (השאר ענף)"
-        : "מחק סמל (השאר ענף)";
+        ? "מחק את כל הסמלים (השאר מודול)"
+        : "מחק סמל (השאר מודול)";
+    }
+    if (ui.branchDeleteBtn) {
+      ui.branchDeleteBtn.disabled = !deletable;
+      ui.branchDeleteBtn.textContent = deletable
+        ? "מחק מודול מהלוח"
+        : "לא ניתן — מודול אחרון בשורה";
     }
     populateCrossSelect(ui.branchWireCross, getWireCross(wireSkForBranch(slotKey)));
+    ui.branchPopup.dataset.slotKey = slotKey;
+    if (ui.branchPopupPicker) ui.branchPopupPicker.classList.add("hidden");
     ui.branchPopup.classList.remove("hidden");
-    ui.branchPopup.style.left = clamp(sx, 8, innerWidth - 220) + "px";
-    ui.branchPopup.style.top = clamp(sy, 8, innerHeight - 180) + "px";
+    branchPopupAnchor = { sx, sy };
+    repositionBranchPopup();
+    if (!syms.length && !modulePopupChainMode) {
+      setPendingPlace(slotKey, 0);
+      toggleBranchPopupPicker(true);
+    }
     syncUI();
   }
 
   function openBranchForChain(slotKey) {
     const syms = symsOnSlot(slotKey);
     if (!syms.length) {
-      openBranchForSymbols(slotKey, 0);
+      branchPickMode = "new";
+      openInlineSymbolPicker(slotKey, 0, "בחר סמל ראשון");
       return;
     }
     if (syms.length >= MAX_CHAIN) {
       toast("עד " + MAX_CHAIN + " סמלים בשרשרת");
       return;
     }
-    showLibraryForSlot(slotKey, syms.length, "בחר סמל — יתווסף מתחת בשרשרת");
+    branchPickMode = "chain";
+    openInlineSymbolPicker(slotKey, syms.length, "בחר סמל — יתווסף מתחת בשרשרת");
+  }
+
+  let branchPickerTapAt = 0;
+
+  function openSymbolPickerFromBranchPopup() {
+    const now = Date.now();
+    if (now - branchPickerTapAt < 400) return;
+    branchPickerTapAt = now;
+    const key = branchPopupSlotKey();
+    if (!key) {
+      toast("לחץ שוב על המודול הכחול");
+      return;
+    }
+    selectedBranchKey = key;
+    const syms = symsOnSlot(key);
+    if (ui.branchPopupPicker && !ui.branchPopupPicker.classList.contains("hidden")) {
+      toggleBranchPopupPicker(false);
+      return;
+    }
+    if (modulePopupChainMode || branchPickMode === "chain") {
+      if (syms.length >= MAX_CHAIN) {
+        toast("עד " + MAX_CHAIN + " סמלים בשרשרת");
+        return;
+      }
+      branchPickMode = "chain";
+      openInlineSymbolPicker(key, syms.length, "בחר סמל — יתווסף לשרשרת");
+      return;
+    }
+    branchPickMode = syms.length ? "replace" : "new";
+    const hint = syms.length ? "בחר סמל — יחליף את הקיים" : "גלול ובחר סמל מהרשימה";
+    openInlineSymbolPicker(key, 0, hint);
   }
 
   function openBranchForSymbols(slotKey, chainIdx) {
     const slot = findSlotByKey(slotKey);
-    if (!slot) return;
+    if (!slot) {
+      toast("מודול לא נמצא — בנה מבנה קווים מחדש");
+      return;
+    }
     const idx = chainIdx != null ? chainIdx : 0;
-    showLibraryForSlot(slotKey, idx, idx > 0
-      ? "בחר סמל לשרשרת"
-      : "בחר סמל למודול — לחיצה כפולה לפתיחה");
+    const syms = symsOnSlot(slotKey);
+    branchPickMode = idx > 0 ? "chain" : (syms.length ? "replace" : "new");
+    openInlineSymbolPicker(
+      slotKey,
+      idx,
+      idx > 0 ? "בחר סמל — יתווסף לשרשרת" : "בחר סמל — יתווסף למודול"
+    );
   }
 
-  function placeSymbolOnSlot(symId, slotKey, chainIdx) {
+  function placeSymbolOnSlot(symId, slotKey, chainIdx, opts) {
     const slot = findSlotByKey(slotKey);
-    if (!slot) return;
+    if (!slot) {
+      toast("מודול לא נמצא — נסה «בנה מבנה קווים» מחדש");
+      return;
+    }
+    if (!SYMBOLS[symId]) {
+      toast("סמל לא נמצא");
+      return;
+    }
     const syms = symsOnSlot(slotKey);
     const idx = chainIdx != null ? chainIdx : 0;
 
-    if (idx === 0 && syms.length > 0 && !symEditEl && branchPlaceChainIdx === 0) {
+    if (idx === 0 && syms.length > 0 && opts && opts.fromLibrary) {
+      const el = syms[0];
+      const def = SYMBOLS[symId];
+      commit(() => {
+        el.sym = symId;
+        if (def && def.hasRating) {
+          if (!el.rating) el.rating = 16;
+          if (!el.curve) el.curve = "C";
+          el.crossSection = autoCrossSection(el);
+          el.phase = phaseForSymbol(def, el.phase);
+          if (el.crossSection != null) {
+            setWireCross(wireSkForChainSym(slotKey, el.chainIdx || 0), el.crossSection, false);
+          }
+        } else {
+          el.rating = null;
+          el.curve = "";
+          el.crossSection = null;
+        }
+      });
+      state.selectedId = el.id;
+      checkModuleOverflow(true);
+      hideLibrary();
+      openSymEdit(el, false);
+      toast("סמל הוחלף: " + (def ? def.name : symId));
+      return;
+    }
+
+    if (idx === 0 && syms.length > 0 && !(opts && opts.fromLibrary)) {
       openSymEdit(syms[0]);
       return;
     }
@@ -742,40 +1119,83 @@
     }
     el.slotKey = slotKey;
     el.chainIdx = idx;
-    commit(() => {
-      state.elements.push(el);
-      if (el.crossSection != null) {
-        setWireCross(wireSkForChainSym(slotKey, idx), el.crossSection, false);
-      }
-      if (state.meta.skeletonBuilt) {
-        const result = BoardSkeleton.generate(
-          state.meta.rowLayout,
-          drawingArea(),
-          state.meta.skeletonOpts || BoardSkeleton.defaultOpts(),
-          getSkeletonGenerateConfig()
-        );
-        applySkeletonResult(result);
-      }
-    });
+    try {
+      commit(() => {
+        state.elements.push(el);
+        if (el.crossSection != null) {
+          setWireCross(wireSkForChainSym(slotKey, idx), el.crossSection, false);
+        }
+        if (state.meta.skeletonBuilt) {
+          const result = BoardSkeleton.generate(
+            state.meta.rowLayout,
+            drawingArea(),
+            state.meta.skeletonOpts || BoardSkeleton.defaultOpts(),
+            getSkeletonGenerateConfig()
+          );
+          applySkeletonResult(result);
+        }
+      });
+    } catch (err) {
+      console.error(err);
+      toast("שגיאה בהוספת סמל — נסה שוב");
+      return;
+    }
     state.selectedId = el.id;
     checkModuleOverflow(true);
     hideLibrary();
-    openSymEdit(el, false);
-    branchPlaceSlot = null;
-    branchPlaceChainIdx = 0;
+    hideBranchPopup();
     hideTerminalPopup();
+    branchPickMode = "new";
+    openSymEdit(el, false);
+    render();
+    syncUI();
+    toast("נוסף: " + SYMBOLS[symId].name);
   }
 
-  function removeBranch(slotKey) {
+  let lastLibPickAt = 0;
+
+  function pickSymbolFromLibrary(symId, item) {
+    const now = Date.now();
+    if (now - lastLibPickAt < 280) return;
+    lastLibPickAt = now;
+
+    if (!SYMBOLS[symId]) {
+      toast("סמל לא נמצא");
+      return;
+    }
+    const target = resolvePlaceTarget();
+    if (target) {
+      placeSymbolOnSlot(symId, target.slotKey, target.chainIdx, { fromLibrary: true });
+      highlightLibItem(symId);
+      return;
+    }
+    if (symEditEl) {
+      replaceSelectedSymbol(symId);
+      if (item) highlightLibItem(symId);
+      return;
+    }
+    if (!state.meta.skeletonBuilt) {
+      toast("קודם בנה מבנה קווים — «בנה מבנה קווים» בפרטי גיליון");
+      return;
+    }
+    armSymbol(symId, item);
+    toast("עכשיו הקש על מודול ריק על השרטוט");
+  }
+
+  function removeBranch(slotKey, opts) {
     const slot = findSlotByKey(slotKey);
-    if (!slot) return;
+    if (!slot) {
+      toast("מודול לא נמצא");
+      return;
+    }
     const row = state.meta.rowLayout[slot.row];
     if (!row || row.modules <= 1) {
-      toast("חייב להישאר לפחות ענף אחד בשורה");
+      toast("חייב להישאר לפחות מודול אחד בשורה");
       return;
     }
     const sym = symOnSlot(slotKey);
-    if (sym && !confirm('למחוק את הענף ואת הסמל "' + (sym.desc || SYMBOLS[sym.sym]?.name || "סמל") + '"?')) return;
+    const skipConfirm = opts && opts.skipConfirm;
+    if (sym && !skipConfirm && !confirm('למחוק את המודול ואת הסמל "' + (sym.desc || SYMBOLS[sym.sym]?.name || "סמל") + '"?')) return;
     commit(() => {
       const delRow = slot.row;
       const delBranch = slot.branch;
@@ -825,14 +1245,17 @@
     toast(sym ? "ענף והסמל נמחקו" : "ענף נמחק");
   }
 
-  function clearBranchSymbols(slotKey) {
+  function clearBranchSymbols(slotKey, opts) {
     const syms = symsOnSlot(slotKey);
     if (!syms.length) {
       toast("אין סמלים למחיקה");
       return;
     }
-    const label = syms.map((s) => s.desc || SYMBOLS[s.sym]?.name || "סמל").join(", ");
-    if (!confirm("למחוק את הסמלים מהמודול?\n" + label)) return;
+    const skipConfirm = opts && opts.skipConfirm;
+    if (!skipConfirm) {
+      const label = syms.map((s) => s.desc || SYMBOLS[s.sym]?.name || "סמל").join(", ");
+      if (!confirm("למחוק את הסמלים מהמודול?\n" + label)) return;
+    }
     commit(() => {
       state.elements = state.elements.filter((e) => !(e.t === "sym" && e.slotKey === slotKey));
       if (state.meta.skeletonBuilt) {
@@ -854,31 +1277,44 @@
   function resolveModuleSlotAt(wx, wy) {
     const hitSym = elementAt(wx, wy);
     if (hitSym && hitSym.t === "sym" && hitSym.slotKey) return hitSym.slotKey;
+    if (!state.meta.skeletonBuilt) return null;
     const termSlot = skeletonTerminalAt(wx, wy);
     if (termSlot) return termSlot;
-    const skBranch = skeletonBranchAt(wx, wy);
-    if (skBranch) return skBranch;
     const skLine = skeletonAnyLineAt(wx, wy);
     if (skLine && skLine.skKind === "branch" && skLine.slotKey) return skLine.slotKey;
-    if (state.meta.skeletonBuilt) {
-      const slot = slotAtPoint(wx, wy);
-      if (slot) return slot.slotKey;
+    const slot = slotAtPoint(wx, wy);
+    if (slot) return slot.slotKey;
+    const skBranch = skeletonBranchAt(wx, wy);
+    if (skBranch) return skBranch;
+    return nearestModuleSlotAt(wx, wy);
+  }
+
+  function nearestModuleSlotAt(wx, wy) {
+    const slots = state.meta.branchSlots || [];
+    if (!slots.length) return null;
+    const xPad = moduleHitPad() + 16;
+    let best = null;
+    let bestScore = Infinity;
+    for (const s of slots) {
+      const dx = Math.abs(wx - s.x);
+      if (dx > xPad) continue;
+      const busY = s.busY != null
+        ? s.busY
+        : (state.meta.rowBusY || {})[s.row];
+      if (busY != null && wy < busY - 24) continue;
+      const score = dx + (busY != null ? Math.abs(wy - busY) * 0.12 : Math.abs(wy - s.y) * 0.05);
+      if (score < bestScore) {
+        bestScore = score;
+        best = s;
+      }
     }
-    return null;
+    return best ? best.slotKey : null;
   }
 
   function openModuleOnDblClick(sx, sy, w) {
-    if (!state.meta.skeletonBuilt) return false;
     const hitSym = symAt(w.x, w.y);
-    if (hitSym && hitSym.slotKey) {
-      presentSymActions(hitSym, sx, sy);
-      return true;
-    }
-    const slotKey = resolveModuleSlotAt(w.x, w.y);
-    if (!slotKey) return false;
-    const chainMode = !!skeletonTerminalAt(w.x, w.y);
-    showBranchPopup(sx, sy, slotKey, { chainMode });
-    return true;
+    const slotKey = (hitSym && hitSym.slotKey) || resolveModuleSlotAt(w.x, w.y);
+    return handleModuleDoubleClick(sx, sy, w, slotKey);
   }
 
   function applySkeletonResult(result) {
@@ -1120,6 +1556,12 @@
 
   function repairSkeletonGeometry() {
     if (!state.meta.skeletonBuilt) return;
+    if (!hasSkeletonLines() || !state.meta.branchSlots || !state.meta.branchSlots.length) {
+      if (state.meta.rowLayout && state.meta.rowLayout.length) {
+        rebuildSkeleton(false);
+      }
+      return;
+    }
     ensureSkeletonOpts();
     const pruned = pruneStructuralSkOverrides();
     if (pruned) {
@@ -1164,8 +1606,9 @@
     return true;
   }
 
-  function needsSkeletonRebuild(skId) {
+  function needsSkeletonRebuild(skId, dragOpts) {
     if (!skId) return false;
+    if (isBranchSlotSkId(skId)) return false;
     if (skId.startsWith("branch-") || skId.startsWith("bus-")) return true;
     if (skId.startsWith("entry") || skId.startsWith("feed-link") || skId.startsWith("trunk-")) return true;
     return false;
@@ -1211,13 +1654,80 @@
     ensureFeedLinksDefaults();
     return {
       feedDir: state.meta.feedDir || "top",
-      branchSlots: [],
+      branchSlots: clone(state.meta.branchSlots || []),
       feedX: resolveFeedX(),
       feedEndY: state.meta.feedEndY != null ? state.meta.feedEndY : null,
       feedLinks: state.meta.feedLinks || {},
       rowBusY: state.meta.rowBusY || {},
       chainCounts: getChainCountsFromElements(),
     };
+  }
+
+  function moveRowBusY(row, dy) {
+    if (dy == null || !dy || row == null) return;
+    if (!state.meta.rowBusY) state.meta.rowBusY = {};
+    const slots = (state.meta.branchSlots || []).filter((s) => s.row === row);
+    const busLn = findSkLine("bus-" + row);
+    const cur = state.meta.rowBusY[row] != null
+      ? state.meta.rowBusY[row]
+      : (slots[0] && slots[0].busY != null ? slots[0].busY : (busLn ? busLn.y1 : null));
+    if (cur == null) return;
+    state.meta.rowBusY[row] = snap(clampY(cur + dy));
+    if (row === feedFirstRowIndex()) state.meta.feedEndY = null;
+  }
+
+  function rowBusHorizontalLimits(row) {
+    const rowSlots = (state.meta.branchSlots || []).filter((s) => s.row === row);
+    if (!rowSlots.length) return { minDx: 0, maxDx: 0 };
+    const ext = rowBusExtentsForSlot(rowSlots[0]);
+    if (!ext) return { minDx: 0, maxDx: 0 };
+    const xs = rowSlots.map((s) => s.x);
+    return {
+      minDx: ext.minX - Math.min(...xs),
+      maxDx: ext.maxX - Math.max(...xs),
+    };
+  }
+
+  function moveRowBusX(row, dx) {
+    if (!dx || row == null) return;
+    const rowSlots = (state.meta.branchSlots || []).filter((s) => s.row === row);
+    if (!rowSlots.length) return;
+    const { minDx, maxDx } = rowBusHorizontalLimits(row);
+    const clampedDx = clamp(dx, minDx, maxDx);
+    const step = snap(clampedDx);
+    if (!step) return;
+    for (const slot of rowSlots) {
+      slot.x = snap(clampX(slot.x + step));
+      slot.userBranchX = true;
+    }
+    const rowMin = Math.min(...rowSlots.map((s) => s.x));
+    const rowMax = Math.max(...rowSlots.map((s) => s.x));
+    rowSlots.forEach((s) => {
+      s.xMin = rowMin;
+      s.xMax = rowMax;
+    });
+    for (const slot of rowSlots) {
+      for (const sym of symsOnSlot(slot.slotKey)) {
+        const pos = symPosForSlot(slot.slotKey, sym.chainIdx || 0);
+        sym.x = pos ? pos.x : snap(slot.x);
+      }
+    }
+    syncAllBranchSkeletonGeometry();
+    syncBusLinesFromSlots();
+  }
+
+  function applyRowBusDrag(row, dx, dy) {
+    if (row == null) return false;
+    let moved = false;
+    if (dx) { moveRowBusX(row, dx); moved = true; }
+    if (dy) { moveRowBusY(row, dy); moved = true; }
+    return moved;
+  }
+
+  function isBranchSlotSkId(skId) {
+    return skId.startsWith("branch-in-") || skId.startsWith("branch-out-") ||
+      skId.startsWith("branch-seg-") || skId.startsWith("branch-link-") ||
+      (skId.startsWith("branch-") && skId !== "branch-");
   }
 
   function feedFirstRowIndex() {
@@ -1259,6 +1769,7 @@
     state.meta.feedEndY = null;
     rebuildSkeleton(false);
     snapFreeLinesToSkeleton();
+    save();
   }
 
   function applySkeletonLineDrag(skId, dx, dy) {
@@ -1270,39 +1781,16 @@
       return;
     }
 
-    if (skId.startsWith("branch-out-")) {
-      const slotKey = branchSlotKeyFromSkId(skId);
-      const slot = findSlotByKey(slotKey);
-      if (!slot) return;
-      if (dy) {
-        const o = ensureSkeletonOpts();
-        o.stubLen = BoardSkeleton.normalizeOpts(Object.assign({}, o, { stubLen: o.stubLen + dy })).stubLen;
-        state.meta.skeletonOpts = o;
-        if (ui.s_stubLen) ui.s_stubLen.value = String(o.stubLen);
-      }
-      return;
-    }
-
-    if (skId.startsWith("branch-in-") || skId.startsWith("branch-seg-") || skId.startsWith("branch-link-") || skId.startsWith("branch-")) {
-      const slotKey = branchSlotKeyFromSkId(skId);
-      const slot = findSlotByKey(slotKey);
-      if (!slot) return;
-      if (dy) {
-        const cur = state.meta.rowBusY[slot.row] != null ? state.meta.rowBusY[slot.row] : slot.busY;
-        state.meta.rowBusY[slot.row] = snap(clampY(cur + dy));
-        if (slot.row === feedFirstRowIndex()) state.meta.feedEndY = null;
-      }
+    if (skId.startsWith("branch-out-") || skId.startsWith("branch-in-") ||
+        skId.startsWith("branch-seg-") || skId.startsWith("branch-junc-") ||
+        isBranchSlotSkId(skId)) {
       return;
     }
 
     if (skId.startsWith("bus-")) {
       const row = Number(skId.slice(4));
-      const ln = findSkLine(skId);
-      if (dy) {
-        const cur = state.meta.rowBusY[row] != null ? state.meta.rowBusY[row] : (ln ? ln.y1 : 0);
-        state.meta.rowBusY[row] = snap(clampY(cur + dy));
-        if (row === feedFirstRowIndex()) state.meta.feedEndY = null;
-      }
+      applyRowBusDrag(row, dx, dy);
+      return;
     }
 
     if (skId.startsWith("entry") || skId === "feed-link-entry") {
@@ -1379,22 +1867,33 @@
     branchPointer = null;
     skPointer = null;
     canvas.style.cursor = "grabbing";
+    if (!branchDragHintShown && isRowBusSkId(skId)) {
+      branchDragHintShown = true;
+      toast("גרור ענף (זהב): שמאלה/ימינה · למעלה/מטה = כל השורה · מודולים — «מרווחים»");
+    }
   }
 
   function applySkDragMove(w) {
     if (!skDrag) return;
+    let dx = 0;
+    let dy = 0;
     skDrag.accX += w.x - skDrag.lx;
     skDrag.accY += w.y - skDrag.ly;
     skDrag.lx = w.x;
     skDrag.ly = w.y;
-    let dx = 0, dy = 0;
     const minStep = GRID * 0.35;
     if (Math.abs(skDrag.accX) >= minStep) { dx = snap(skDrag.accX); skDrag.accX -= dx; }
     if (Math.abs(skDrag.accY) >= minStep) { dy = snap(skDrag.accY); skDrag.accY -= dy; }
     if (!dx && !dy) return;
     if (!skDrag.pushed) { pushHistory(); skDrag.pushed = true; }
     applySkeletonLineDrag(skDrag.skId, dx, dy);
-    if (needsSkeletonRebuild(skDrag.skId)) {
+    if (isRowBusSkId(skDrag.skId)) {
+      if (dy) rebuildSkeleton(false);
+      else {
+        syncChainSymPositions();
+        render();
+      }
+    } else if (needsSkeletonRebuild(skDrag.skId, { dy: !!dy })) {
       rebuildSkeleton(false);
     } else {
       applySkLineOverrides();
@@ -1413,7 +1912,12 @@
       if (dx || dy) {
         if (!skDrag.pushed) pushHistory();
         applySkeletonLineDrag(skDrag.skId, dx, dy);
-        if (needsSkeletonRebuild(skDrag.skId)) {
+        if (isRowBusSkId(skDrag.skId)) {
+          if (dy) rebuildSkeleton(false);
+          else {
+            syncChainSymPositions();
+          }
+        } else if (needsSkeletonRebuild(skDrag.skId, { dy: !!dy })) {
           rebuildSkeleton(false);
         } else {
           applySkLineOverrides();
@@ -1426,11 +1930,12 @@
     }
     if (skDrag.pushed) save();
     const finishedSkId = skDrag.skId;
+    const wasBusRow = isRowBusSkId(finishedSkId);
     skDrag = null;
     branchPointer = null;
     skPointer = null;
     canvas.style.cursor = "";
-    if (finishedSkId && finishedSkId.startsWith("branch-")) {
+    if (wasBusRow) {
       finalizeBranchDrag(finishedSkId);
     } else if (finishedSkId && needsSkeletonRebuild(finishedSkId)) {
       ensureFeedLinksDefaults();
@@ -1518,15 +2023,21 @@
   }
 
   function skeletonEntryAt(wx, wy) {
+    const hit = skLineHitDist("entry");
+    let best = null;
+    let bestD = Infinity;
     for (const el of state.elements) {
       if (el.t === "line" && el.skeleton && el.skKind === "entry") {
-        if (distSeg(wx, wy, el.x1, el.y1, el.x2, el.y2) <= 14) return el;
+        const d = distSeg(wx, wy, el.x1, el.y1, el.x2, el.y2);
+        if (d <= hit && d < bestD) { bestD = d; best = el; }
       }
       if (el.t === "dot" && el.skeleton && el.skKind === "entry") {
-        if (Math.hypot(wx - el.x, wy - el.y) <= 14) return el;
+        const d = Math.hypot(wx - el.x, wy - el.y);
+        const r = (el.r || 4) + (isCoarsePointer() ? 16 : 10);
+        if (d <= r && d < bestD) { bestD = d; best = el; }
       }
     }
-    return null;
+    return best;
   }
 
   function skeletonTerminalAt(wx, wy) {
@@ -1540,15 +2051,61 @@
     return best;
   }
 
+  function skeletonBusRowAt(wx, wy) {
+    const yPad = isCoarsePointer() ? 30 : 22;
+    const xPad = isCoarsePointer() ? 20 : 12;
+    const rows = state.meta.rowLayout || [];
+    let bestRow = null;
+    let bestScore = Infinity;
+    for (let ri = 0; ri < rows.length; ri++) {
+      const slots = (state.meta.branchSlots || []).filter((s) => s.row === ri);
+      if (!slots.length) continue;
+      const bus = findSkLine("bus-" + ri);
+      const busY = bus ? bus.y1 : slots[0].busY;
+      if (busY == null) continue;
+      if (Math.abs(wy - busY) > yPad) continue;
+      const busL = bus ? Math.min(bus.x1, bus.x2) - xPad : Math.min(...slots.map((s) => s.x)) - xPad;
+      const busR = bus ? Math.max(bus.x1, bus.x2) + xPad : Math.max(...slots.map((s) => s.x)) + xPad;
+      if (wx < busL || wx > busR) continue;
+      const score = Math.abs(wy - busY);
+      if (score < bestScore) {
+        bestScore = score;
+        bestRow = ri;
+      }
+    }
+    return bestRow;
+  }
+
+  function skeletonBusBranchAt(wx, wy) {
+    const row = skeletonBusRowAt(wx, wy);
+    if (row == null) return null;
+    const slots = (state.meta.branchSlots || []).filter((s) => s.row === row);
+    if (!slots.length) return null;
+    let best = slots[0].slotKey;
+    let bestDx = Math.abs(wx - slots[0].x);
+    for (const s of slots) {
+      const dx = Math.abs(wx - s.x);
+      if (dx < bestDx) { bestDx = dx; best = s.slotKey; }
+    }
+    return best;
+  }
+
   function skeletonBranchAt(wx, wy) {
     const pad = moduleHitPad();
-    const linePad = isCoarsePointer() ? 22 : 14;
+    const linePad = isCoarsePointer() ? 28 : 22;
+    if (skeletonBusRowAt(wx, wy) != null) return null;
+    const busHit = skeletonBusBranchAt(wx, wy);
+    if (busHit) return busHit;
     for (const el of state.elements) {
       if (el.t === "dot" && el.skeleton && el.skKind === "branch" && el.slotKey && !el.terminal) {
         const slot = findSlotByKey(el.slotKey);
-        const half = slot ? branchHalfWidth(slot.row) : pad + 8;
+        const isJunc = el.skId && String(el.skId).startsWith("branch-junc-");
+        const hitR = isJunc ? (isCoarsePointer() ? 26 : 20) : pad;
+        const hitY = isJunc ? (isCoarsePointer() ? 24 : 16) : hitR;
+        const half = slot ? branchHalfWidth(slot.row) + (isJunc ? 12 : 0) : pad + 8;
         if (Math.abs(wx - el.x) > half) continue;
-        if (Math.hypot(wx - el.x, wy - el.y) <= pad) return el.slotKey;
+        if (Math.abs(wx - el.x) <= hitR && Math.abs(wy - el.y) <= hitY) return el.slotKey;
+        if (!isJunc && Math.hypot(wx - el.x, wy - el.y) <= pad) return el.slotKey;
       }
     }
     for (const el of state.elements) {
@@ -1603,8 +2160,7 @@
     ui.feedPopup.classList.remove("hidden");
     const popW = 220;
     const popH = innerWidth <= 768 ? 300 : 220;
-    ui.feedPopup.style.left = clamp(sx, 8, innerWidth - popW - 8) + "px";
-    ui.feedPopup.style.top = clamp(sy, 8, innerHeight - popH - 8) + "px";
+    placeFloatingPopup(ui.feedPopup, sx, sy, popW, popH);
     ui.feedPopup.querySelector('[data-feed="top"]').classList.toggle("is-active", state.meta.feedDir !== "bottom");
     ui.feedPopup.querySelector('[data-feed="bottom"]').classList.toggle("is-active", state.meta.feedDir === "bottom");
     const align = state.meta.feedAlign || "center";
@@ -1699,10 +2255,10 @@
   function slotAtPoint(wx, wy) {
     const slots = state.meta.branchSlots || [];
     if (!slots.length) return null;
-    const yPad = moduleHitPad() + 16;
+    const yPad = moduleHitPad() + 28;
     let best = null, bestDx = Infinity, bestDy = Infinity;
     for (const s of slots) {
-      const half = branchHalfWidth(s.row);
+      const half = branchHalfWidth(s.row) + 6;
       const dx = Math.abs(wx - s.x);
       if (dx > half) continue;
       const yTop = (s.busY != null ? s.busY : (s.firstSymY != null ? s.firstSymY - 90 : s.y - 90)) - yPad;
@@ -1766,16 +2322,31 @@
     return true;
   }
 
+  function rowBusExtentsForSlot(slot) {
+    if (!slot) return null;
+    const area = drawingArea();
+    const margin = 72;
+    return { minX: snap(area.x0 + margin), maxX: snap(area.x1 - margin) };
+  }
+
   function branchColumnBounds(slot) {
-    const half = branchHalfWidth(slot.row);
+    const MIN_BRANCH_GAP = GRID * 2;
     const rowSlots = (state.meta.branchSlots || [])
       .filter((s) => s.row === slot.row)
       .sort((a, b) => a.x - b.x);
     const idx = rowSlots.findIndex((s) => s.slotKey === slot.slotKey);
     const leftN = idx > 0 ? rowSlots[idx - 1] : null;
     const rightN = idx >= 0 && idx < rowSlots.length - 1 ? rowSlots[idx + 1] : null;
-    const leftBound = leftN ? (leftN.x + slot.x) / 2 : slot.x - half;
-    const rightBound = rightN ? (slot.x + rightN.x) / 2 : slot.x + half;
+    const bus = rowBusExtentsForSlot(slot);
+    const busMin = bus ? snap(bus.minX) : snap(slot.x - branchHalfWidth(slot.row));
+    const busMax = bus ? snap(bus.maxX) : snap(slot.x + branchHalfWidth(slot.row));
+    let leftBound = leftN ? snap(leftN.x + MIN_BRANCH_GAP) : busMin;
+    let rightBound = rightN ? snap(rightN.x - MIN_BRANCH_GAP) : busMax;
+    leftBound = Math.max(busMin, leftBound);
+    rightBound = Math.min(busMax, rightBound);
+    if (leftBound > rightBound) {
+      leftBound = rightBound = snap(slot.x);
+    }
     return {
       lineX: slot.x,
       leftBound: snap(leftBound),
@@ -2143,6 +2714,9 @@
   function branchSlotKeyFromSkId(skId) {
     if (skId.startsWith("branch-in-")) return skId.slice(10);
     if (skId.startsWith("branch-out-")) return skId.slice(11);
+    if (skId.startsWith("branch-junc-")) return skId.slice(12);
+    if (skId.startsWith("branch-term-")) return skId.slice(12);
+    if (skId.startsWith("branch-in-dot-")) return skId.slice(14);
     if (skId.startsWith("branch-seg-") || skId.startsWith("branch-link-")) {
       const rest = skId.startsWith("branch-seg-") ? skId.slice(11) : skId.slice(12);
       const lastDash = rest.lastIndexOf("-");
@@ -2188,8 +2762,7 @@
     }
     populateCrossSelect(ui.wire_cross, getWireCross(skId));
     ui.wirePopup.classList.remove("hidden");
-    ui.wirePopup.style.left = clamp(sx, 8, innerWidth - 220) + "px";
-    ui.wirePopup.style.top = clamp(sy, 8, innerHeight - 160) + "px";
+    placeFloatingPopup(ui.wirePopup, sx, sy, 220, 160);
   }
 
   function applyWireCross() {
@@ -2546,6 +3119,29 @@
   }
   function w2s(wx, wy, t) { t = t || T(); return { x: wx * t.s + t.ox, y: wy * t.s + t.oy }; }
   function s2w(sx, sy) { const t = T(); return { x: (sx - t.ox) / t.s, y: (sy - t.oy) / t.s }; }
+  function canvasPointToClient(sx, sy) {
+    const r = canvas.getBoundingClientRect();
+    return { x: r.left + sx, y: r.top + sy };
+  }
+
+  function canvasEventXY(e) {
+    const r = canvas.getBoundingClientRect();
+    return { sx: e.clientX - r.left, sy: e.clientY - r.top };
+  }
+
+  function placeFloatingPopup(el, sx, sy, popW, popH) {
+    if (!el) return;
+    const cl = canvasPointToClient(sx, sy);
+    const w = popW != null ? popW : 220;
+    const h = popH != null ? popH : 180;
+    el.style.left = clamp(cl.x, 8, innerWidth - w - 8) + "px";
+    el.style.top = clamp(cl.y, 8, innerHeight - h - 8) + "px";
+  }
+
+  function branchPopupSlotKey() {
+    if (ui.branchPopup && ui.branchPopup.dataset.slotKey) return ui.branchPopup.dataset.slotKey;
+    return selectedBranchKey;
+  }
   function zoomAt(f, k) {
     const n = clamp(view.scale * k, MIN_SCALE, MAX_SCALE), r = n / view.scale;
     view.tx = f.x - (f.x - view.tx) * r;
@@ -2561,7 +3157,7 @@
     ctx.fillStyle = "#0e1014";
     ctx.fillRect(0, 0, w, h);
     const t = T();
-    drawSheet(ctx, t, { grid: true });
+    drawSheet(ctx, t, { grid: true, liveGlow: true });
     drawSelection(ctx, t);
     if (draftLine) drawLineEl(ctx, t, draftLine);
   }
@@ -2575,7 +3171,7 @@
     g.lineWidth = 1;
     g.strokeRect(a.x + 0.5, a.y + 0.5, pw - 1, ph - 1);
     if (opts && opts.grid) drawGrid(g, t);
-    drawElements(g, t);
+    drawElements(g, t, opts);
     drawBranchSlots(g, t);
     drawFrame(g, t);
     drawTitleBlock(g, t);
@@ -2584,17 +3180,32 @@
   }
 
   function drawExportWatermark(g, t) {
+    const cx = PAPER.W / 2;
+    const cy = PAPER.H / 2;
+    const r = PAPER.W * 0.38;
+    g.save();
+    const p0 = w2s(cx - r, cy, t);
+    const p1 = w2s(cx + r, cy, t);
+    g.translate((p0.x + p1.x) / 2, (p0.y + p1.y) / 2);
+    g.rotate(-Math.PI / 6);
+    g.fillStyle = "rgba(180, 83, 9, 0.07)";
+    g.font = `${Math.max(14, 22 * t.s)}px ui-sans-serif, system-ui, "Noto Sans Hebrew", Arial, sans-serif`;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText(EXPORT_DISCLAIMER_HE, 0, 0);
+    g.restore();
+
     const y = PAPER.H - PAPER.band + 2;
     const x0 = PAPER.band + 4;
     const w = PAPER.W - (PAPER.band + 4) * 2;
     const h = 30;
-    const p0 = w2s(x0, y, t);
-    const p1 = w2s(x0 + w, y + h, t);
+    const band0 = w2s(x0, y, t);
+    const band1 = w2s(x0 + w, y + h, t);
     g.fillStyle = "rgba(255, 248, 240, 0.98)";
-    g.fillRect(p0.x, p0.y, p1.x - p0.x, p1.y - p0.y);
+    g.fillRect(band0.x, band0.y, band1.x - band0.x, band1.y - band0.y);
     g.strokeStyle = "#b45309";
     g.lineWidth = Math.max(1, 1.4 * t.s);
-    g.strokeRect(p0.x + 0.5, p0.y + 0.5, p1.x - p0.x - 1, p1.y - p0.y - 1);
+    g.strokeRect(band0.x + 0.5, band0.y + 0.5, band1.x - band0.x - 1, band1.y - band0.y - 1);
     wtext(g, t, EXPORT_DISCLAIMER_HE, PAPER.W / 2, y + 10, 10, "center", "middle", "#7c2d12");
     wtext(g, t, EXPORT_DISCLAIMER_EN, PAPER.W / 2, y + 22, 9, "center", "middle", "#92400e");
   }
@@ -2775,14 +3386,14 @@
     g.restore();
   }
 
-  function drawElements(g, t) {
+  function drawElements(g, t, opts) {
     clearBranchDescLayoutCache();
     g.strokeStyle = "#111"; g.fillStyle = "#111";
     for (const el of state.elements) {
-      if (el.t === "line" && el.skeleton) drawLineStroke(g, t, el);
+      if (el.t === "line" && el.skeleton) drawLineStroke(g, t, el, opts);
     }
     for (const el of state.elements) {
-      if (el.t === "line" && !el.skeleton) drawLineStroke(g, t, el);
+      if (el.t === "line" && !el.skeleton) drawLineStroke(g, t, el, opts);
     }
     for (const el of state.elements) {
       if (el.t === "dot") drawDotEl(g, t, el);
@@ -2807,12 +3418,28 @@
     }
   }
 
-  function drawLineStroke(g, t, el) {
-    g.strokeStyle = "#111";
+  function drawLineStroke(g, t, el, opts) {
+    const live = opts && opts.liveGlow && el.skeleton;
+    const isFeed = el.skKind === "entry" || el.skKind === "bus" || el.skKind === "feed";
     let lw = el.skeleton ? 1.7 : 1.5;
     if (el.skKind === "entry") lw = 2;
     if (el.skKind === "branch") lw = 1.9;
-    wline(g, t, el.x1, el.y1, el.x2, el.y2, Math.max(1, lw * t.s));
+    const lineW = Math.max(1, lw * t.s);
+    if (live) {
+      const color = isFeed ? "#ffb020" : "#22d3ee";
+      g.save();
+      g.strokeStyle = color;
+      g.shadowColor = isFeed ? "rgba(255, 176, 32, 0.7)" : "rgba(34, 211, 238, 0.55)";
+      g.shadowBlur = Math.max(4, 7 * t.s);
+      wline(g, t, el.x1, el.y1, el.x2, el.y2, lineW);
+      g.shadowBlur = 0;
+      g.strokeStyle = color;
+      wline(g, t, el.x1, el.y1, el.x2, el.y2, lineW);
+      g.restore();
+      return;
+    }
+    g.strokeStyle = "#111";
+    wline(g, t, el.x1, el.y1, el.x2, el.y2, lineW);
   }
 
   function drawLineLabels(g, t, el) {
@@ -3123,9 +3750,11 @@
 
   let draftLine = null, moving = null, dragHistoryPushed = false;
 
-  function pointerDown(sx, sy) {
-    if (window.RadialMenu && RadialMenu.isOpen() && !RadialMenu.hitTest(sx, sy)) {
-      RadialMenu.hide();
+  function pointerDown(sx, sy, clientPt) {
+    cancelSymRadialTimer();
+    if (window.RadialMenu && RadialMenu.isOpen()) {
+      const cl = clientPt || canvasPointToClient(sx, sy);
+      if (!RadialMenu.hitTest(cl.x, cl.y)) RadialMenu.hide();
     }
     if (spacePanHeld || altPanHeld) {
       panStart(sx, sy);
@@ -3168,43 +3797,69 @@
       return;
     }
     if (tool === "select") {
-      hideFeedPopup();
-      hideBranchPopup();
+      const entryAtDown = state.meta.skeletonBuilt ? skeletonEntryAt(w.x, w.y) : null;
+      const skAtDown = state.meta.skeletonBuilt ? skeletonAnyLineAt(w.x, w.y) : null;
+      const feedTapDown = entryAtDown || (skAtDown && (
+        skAtDown.skKind === "entry" || skAtDown.skKind === "feed-link" || skAtDown.skKind === "trunk"
+      ));
+      if (!feedTapDown) hideFeedPopup();
       hideTerminalPopup();
-      selectedBranchKey = null;
 
       const hitSym = symAt(w.x, w.y);
       if (hitSym && hitSym.slotKey) {
-        state.selectedId = hitSym.id;
         symPointer = { el: hitSym, sx, sy, moved: false };
+        state.selectedId = hitSym.id;
+        selectedBranchKey = hitSym.slotKey;
         render();
         syncUI();
         return;
       }
 
       if (state.meta.skeletonBuilt) {
+        const entryHit = skeletonEntryAt(w.x, w.y);
+        if (entryHit) {
+          beginSkLineTap(sx, sy, w, entryHit);
+          return;
+        }
+        const busRow = skeletonBusRowAt(w.x, w.y);
+        if (busRow != null) {
+          beginBusRowTap(sx, sy, w, busRow);
+          return;
+        }
         const termSlot = skeletonTerminalAt(w.x, w.y);
         if (termSlot) {
-          beginModuleTap(sx, sy, w, "branch-out-" + termSlot, termSlot);
+          beginModuleTap(sx, sy, w, null, termSlot, { noDrag: true });
           return;
         }
         const skLine = skeletonAnyLineAt(w.x, w.y);
         if (skLine && skLine.skKind === "branch" && skLine.slotKey) {
-          beginModuleTap(sx, sy, w, skLine.skId, skLine.slotKey);
+          beginModuleTap(sx, sy, w, null, skLine.slotKey, { noDrag: true });
+          return;
+        }
+        const skBranch = skeletonBranchAt(w.x, w.y);
+        if (skBranch) {
+          beginModuleTap(sx, sy, w, null, skBranch, { noDrag: true });
+          return;
+        }
+        const colSlot = slotAtPoint(w.x, w.y);
+        if (colSlot) {
+          beginModuleTap(sx, sy, w, null, colSlot.slotKey, { noDrag: true });
+          return;
+        }
+        const nearSlot = nearestModuleSlotAt(w.x, w.y);
+        if (nearSlot) {
+          beginModuleTap(sx, sy, w, null, nearSlot, { noDrag: true });
           return;
         }
         if (skLine) {
           beginSkLineTap(sx, sy, w, skLine);
           return;
         }
-        const skBranch = skeletonBranchAt(w.x, w.y);
-        if (skBranch) {
-          beginModuleTap(sx, sy, w, "branch-in-" + skBranch, skBranch);
-          return;
-        }
       }
 
       selectedSkLineId = null;
+      hideBranchPopup();
+      selectedBranchKey = null;
       const hit = elementAt(w.x, w.y);
       state.selectedId = hit ? hit.id : null;
       render(); syncUI();
@@ -3229,8 +3884,8 @@
   function pointerMove(sx, sy) {
     lastPointer.sx = sx;
     lastPointer.sy = sy;
-    if (moduleTapPointer && !moduleTapPointer.moved) {
-      if (Math.hypot(sx - moduleTapPointer.sx, sy - moduleTapPointer.sy) > DRAG_THRESHOLD) {
+    if (moduleTapPointer && !moduleTapPointer.moved && moduleTapPointer.dragEnabled) {
+      if (Math.hypot(sx - moduleTapPointer.sx, sy - moduleTapPointer.sy) > BRANCH_DRAG_THRESHOLD) {
         moduleTapPointer.moved = true;
         beginSkDrag(
           moduleTapPointer.skId,
@@ -3240,6 +3895,13 @@
           sy
         );
         moduleTapPointer = null;
+      } else {
+        return;
+      }
+    }
+    if (moduleTapPointer && !moduleTapPointer.moved && !moduleTapPointer.dragEnabled) {
+      if (Math.hypot(sx - moduleTapPointer.sx, sy - moduleTapPointer.sy) > MODULE_CLICK_SLOP) {
+        moduleTapPointer.moved = true;
       } else {
         return;
       }
@@ -3267,7 +3929,15 @@
       return;
     }
     if (symPointer && !moving) {
-      if (Math.hypot(sx - symPointer.sx, sy - symPointer.sy) > DRAG_THRESHOLD) {
+      if (Math.hypot(sx - symPointer.sx, sy - symPointer.sy) > MODULE_CLICK_SLOP) {
+        if (symPointer.el.slotKey) {
+          const ox = symPointer.sx;
+          const oy = symPointer.sy;
+          symPointer = null;
+          panStart(ox, oy);
+          panMove(sx, sy);
+          return;
+        }
         symPointer.moved = true;
         dragHistoryPushed = false;
         const el = symPointer.el;
@@ -3277,7 +3947,8 @@
     if (terminalPointer && !skDrag) {
       if (Math.hypot(sx - terminalPointer.sx, sy - terminalPointer.sy) > DRAG_THRESHOLD) {
         terminalPointer.moved = true;
-        beginSkDrag("branch-out-" + terminalPointer.slotKey, w.x, w.y, terminalPointer.sx, terminalPointer.sy);
+        const row = rowFromSlotKey(terminalPointer.slotKey);
+        if (row != null) beginSkDrag("bus-" + row, w.x, w.y, terminalPointer.sx, terminalPointer.sy);
         terminalPointer = null;
       }
     }
@@ -3297,7 +3968,10 @@
           render();
         }
       } else {
-        if (el.t === "sym") el.slotKey = null;
+        if (el.t === "sym") {
+          if (el.slotKey) return;
+          el.slotKey = null;
+        }
         el.x = snap(clampX(w.x - moving.dx));
         el.y = snap(clampY(w.y - moving.dy));
         render();
@@ -3309,7 +3983,30 @@
 
   function pointerUp() {
     if (moduleTapPointer && !moduleTapPointer.moved) {
-      finishModuleTap(moduleTapPointer.sx, moduleTapPointer.sy);
+      const ptr = moduleTapPointer;
+      const w = s2w(ptr.sx, ptr.sy);
+      const slotKey = ptr.slotKey || resolveModuleSlotAtClick(w.x, w.y);
+      const now = Date.now();
+      if (!ptr.dragEnabled && slotKey) {
+        handleModuleClick(ptr.sx, ptr.sy, w, slotKey);
+        lastModuleTap = { time: now, sx: ptr.sx, sy: ptr.sy, slotKey };
+      } else if (ptr.dragEnabled && slotKey) {
+        selectModuleAtPointer(ptr);
+      }
+      moduleTapPointer = null;
+      skLineTapPointer = null;
+      panning = false;
+      return;
+    }
+    if (moduleTapPointer && moduleTapPointer.moved && !moduleTapPointer.dragEnabled) {
+      const ptr = moduleTapPointer;
+      const w = s2w(ptr.sx, ptr.sy);
+      const slotKey = ptr.slotKey || resolveModuleSlotAtClick(w.x, w.y);
+      if (slotKey && Math.hypot(lastPointer.sx - ptr.sx, lastPointer.sy - ptr.sy) < moduleHitPad()) {
+        const now = Date.now();
+        handleModuleClick(ptr.sx, ptr.sy, w, slotKey);
+        lastModuleTap = { time: now, sx: ptr.sx, sy: ptr.sy, slotKey };
+      }
       moduleTapPointer = null;
       skLineTapPointer = null;
       panning = false;
@@ -3337,8 +4034,25 @@
     skPointer = null;
     branchPointer = null;
     if (symPointer && !symPointer.moved) {
-      const c = w2s(symPointer.el.x, symPointer.el.y, T());
-      presentSymActions(symPointer.el, c.x, c.y);
+      const sym = symPointer.el;
+      const sx = symPointer.sx;
+      const sy = symPointer.sy;
+      const w = s2w(sx, sy);
+      const slotKey = sym && sym.slotKey ? sym.slotKey : resolveModuleSlotAtClick(w.x, w.y);
+      const now = Date.now();
+      const isDouble =
+        slotKey &&
+        lastModuleTap.slotKey === slotKey &&
+        now - lastModuleTap.time <= MODULE_TAP_MS &&
+        Math.hypot(sx - lastModuleTap.sx, sy - lastModuleTap.sy) < 52;
+      if (sym && sym.slotKey) {
+        handleModuleClick(sx, sy, w, sym.slotKey);
+        lastModuleTap = { time: now, sx, sy, slotKey: sym.slotKey };
+      } else if (useModuleTapUX() && sym) {
+        presentSymActions(sym, sx, sy);
+      } else if (sym) {
+        scheduleSymRadial(sym, sx, sy);
+      }
       symPointer = null;
       return;
     }
@@ -3360,7 +4074,13 @@
       return;
     }
     if (moving) {
-      if (moving.el && moving.el.t === "line" && !moving.el.skeleton) {
+      if (moving.el && moving.el.t === "sym" && moving.el.slotKey) {
+        const pos = symPosForSlot(moving.el.slotKey, moving.el.chainIdx || 0);
+        if (pos) {
+          moving.el.x = pos.x;
+          moving.el.y = pos.y;
+        }
+      } else if (moving.el && moving.el.t === "line" && !moving.el.skeleton) {
         snapFreeLinesToSkeleton(attachSnapThreshold());
       }
       if (dragHistoryPushed) save();
@@ -3413,7 +4133,7 @@
     } else if (e.touches.length === 1 && !gesture.active) {
       const p = txy(e.touches[0]);
       down = { x: p.x, y: p.y, moved: false };
-      pointerDown(p.x, p.y);
+      pointerDown(p.x, p.y, { x: e.touches[0].clientX, y: e.touches[0].clientY });
     }
   }, { passive: false });
 
@@ -3445,16 +4165,17 @@
   canvas.addEventListener("mousedown", (e) => {
     if (modalOpen()) return;
     inputIsTouch = false;
+    const pt = canvasEventXY(e);
     if (e.button === 1 || e.button === 2) {
-      panStart(e.offsetX, e.offsetY);
+      panStart(pt.sx, pt.sy);
       mDown = "pan";
       canvas.style.cursor = "grabbing";
       return;
     }
     mDown = true;
-    lastPointer.sx = e.offsetX;
-    lastPointer.sy = e.offsetY;
-    pointerDown(e.offsetX, e.offsetY);
+    lastPointer.sx = pt.sx;
+    lastPointer.sy = pt.sy;
+    pointerDown(pt.sx, pt.sy, { x: e.clientX, y: e.clientY });
   });
   window.addEventListener("mousemove", (e) => {
     if (!mDown) return;
@@ -3470,18 +4191,27 @@
   });
   canvas.addEventListener("contextmenu", (e) => e.preventDefault());
   canvas.addEventListener("dblclick", (e) => {
-    lastModuleTap.time = 0;
+    if (modalOpen()) return;
+    cancelSymRadialTimer();
+    suppressRadialUntil = Date.now() + MODULE_TAP_MS;
     lastSkLineTap.time = 0;
-    const w = s2w(e.offsetX, e.offsetY);
-    if (openModuleOnDblClick(e.offsetX, e.offsetY, w)) {
+    moduleTapPointer = null;
+    symPointer = null;
+    hideBranchPopup();
+    const pt = canvasEventXY(e);
+    const w = s2w(pt.sx, pt.sy);
+    const slotKey = resolveModuleSlotAtClick(w.x, w.y);
+    if (slotKey && handleModuleClick(pt.sx, pt.sy, w, slotKey)) {
       e.preventDefault();
+      e.stopPropagation();
+      lastModuleTap.time = 0;
       return;
     }
     if (state.meta.skeletonBuilt) {
       const skLine = skeletonAnyLineAt(w.x, w.y);
       if (skLine && skLine.skKind !== "branch") {
         e.preventDefault();
-        openSkLineClickMenu(skLineMenuMeta(skLine, e.offsetX, e.offsetY));
+        openSkLineClickMenu(skLineMenuMeta(skLine, pt.sx, pt.sy));
         return;
       }
     }
@@ -3493,7 +4223,7 @@
     } else if (el && el.t === "text") {
       state.selectedId = el.id;
       render();
-      openLabelEditor(e.offsetX, e.offsetY, el);
+      openLabelEditor(pt.sx, pt.sy, el);
     }
   });
   canvas.addEventListener("wheel", (e) => {
@@ -3531,8 +4261,7 @@
       if (spacingPanelOpen) { closeSpacingPanel(); render(); syncUI(); return; }
       if (symEditEl) { closeSymEdit(); render(); syncUI(); return; }
       hideLibrary();
-      branchPlaceSlot = null;
-      branchPlaceChainIdx = 0;
+      clearPendingPlace();
       hideWirePopup();
       hideTerminalPopup();
       disarm(); state.selectedId = null;
@@ -3655,16 +4384,21 @@
     hideFeedPopup();
     hideTerminalPopup();
     closeSymEdit();
-    let px = sx;
-    let py = sy;
-    if (px == null || py == null) {
-      const c = w2s(el.x, el.y, T());
-      px = c.x;
-      py = c.y;
+    let clientX;
+    let clientY;
+    if (sx != null && sy != null) {
+      const cl = canvasPointToClient(sx, sy);
+      clientX = cl.x;
+      clientY = cl.y;
+    } else {
+      const s = w2s(el.x, el.y, T());
+      const cl = canvasPointToClient(s.x, s.y);
+      clientX = cl.x;
+      clientY = cl.y;
     }
     const hole = document.getElementById("radialMenuHole");
     if (hole) hole.innerHTML = radialCenterHtml(el);
-    if (window.RadialMenu) RadialMenu.show(el, px, py);
+    if (window.RadialMenu) RadialMenu.show(el, clientX, clientY);
     render();
     syncUI();
   }
@@ -3771,6 +4505,9 @@
 
   function openSymEdit(el, showLibrary) {
     if (window.RadialMenu) RadialMenu.hide();
+    hideBranchPopup();
+    hideTerminalPopup();
+    if (ui.branchPopupPicker) ui.branchPopupPicker.classList.add("hidden");
     symEditEl = el;
     state.selectedId = el.id;
     const def = SYMBOLS[el.sym];
@@ -3786,21 +4523,40 @@
     }
     refreshSymEditFields();
     ui.symEditPanel.classList.remove("hidden");
-    if (showLibrary !== false) ui.library.classList.remove("hidden");
+    ui.symEditPanel.setAttribute("aria-hidden", "false");
+    if (ui.symEditBackdrop) {
+      ui.symEditBackdrop.classList.remove("hidden");
+      ui.symEditBackdrop.setAttribute("aria-hidden", "false");
+    }
+    document.body.classList.add("sym-edit-open");
+    if (showLibrary === false) {
+      hideLibrary();
+    } else if (ui.library) {
+      ui.library.classList.remove("hidden");
+    }
     highlightLibItem(el.sym);
     ui.libHint.textContent = el.slotKey && symsOnSlot(el.slotKey).length > 1
       ? "לחץ על סמל — עריכה / מחיקה בודדת · «מחק סמל זה בלבד»"
       : "לחיצה על מודול — בחר סמל · Esc לסגירה";
     syncUI();
     render();
+    requestAnimationFrame(() => ui.sym_desc?.focus());
   }
 
   function closeSymEdit() {
-    if (ui.symEditPanel) ui.symEditPanel.classList.add("hidden");
+    if (ui.symEditPanel) {
+      ui.symEditPanel.classList.add("hidden");
+      ui.symEditPanel.setAttribute("aria-hidden", "true");
+    }
+    if (ui.symEditBackdrop) {
+      ui.symEditBackdrop.classList.add("hidden");
+      ui.symEditBackdrop.setAttribute("aria-hidden", "true");
+    }
+    document.body.classList.remove("sym-edit-open");
     if (window.RadialMenu) RadialMenu.hide();
     symEditEl = null;
     highlightLibItem(null);
-    if (!placeSym) ui.libHint.textContent = "לחיצה כפולה על מודול — בחר סמל";
+    if (!placeSym) ui.libHint.textContent = "לחץ על סמל — יתווסף למודול";
     syncUI();
   }
 
@@ -3828,8 +4584,6 @@
     });
     closeSymEdit();
     hideLibrary();
-    branchPlaceSlot = null;
-    branchPlaceChainIdx = 0;
     disarm();
     toast("שינויים נשמרו");
   }
@@ -3899,48 +4653,55 @@
   }
   function deleteSelected() {
     if (symEditEl) { deleteSymEdit(); return; }
-    if (selectedBranchKey && state.meta.skeletonBuilt) {
-      removeBranch(selectedBranchKey);
+    const el = selected();
+    if (el && el.t === "sym" && el.slotKey) {
+      symEditEl = el;
+      deleteSymEdit();
       return;
     }
-    const el = selected();
-    if (!el) { toast("בחר ענף או רכיב למחיקה"); return; }
+    const placeTarget = resolvePlaceTarget();
+    const branchKey = selectedBranchKey || (placeTarget && placeTarget.slotKey);
+    if (branchKey && state.meta.skeletonBuilt) {
+      const syms = symsOnSlot(branchKey);
+      if (syms.length) {
+        clearBranchSymbols(branchKey, { skipConfirm: true });
+      } else {
+        toast("אין סמל למחיקה במודול זה");
+      }
+      return;
+    }
+    if (!el) { toast("לחץ על מודול עם סמל · או בחר סמל ואז מחק"); return; }
     if (el.skeleton) { toast("לא ניתן למחוק קו מבנה — בנה מחדש"); return; }
     commit(() => { state.elements = state.elements.filter((e) => e.id !== el.id); });
     state.selectedId = null;
     syncUI();
     checkModuleOverflow(true);
+    toast("נמחק");
   }
 
   function buildLibrary() {
     ui.libBody.innerHTML = "";
-    for (const [cat, title] of CATS) {
+    const seen = new Set();
+    for (const group of LIB_GROUPS) {
       const sec = document.createElement("div");
       sec.className = "lib-section";
       const h = document.createElement("div");
       h.className = "lib-section-title";
-      h.textContent = title;
+      h.textContent = group.title;
       sec.appendChild(h);
       const grid = document.createElement("div");
       grid.className = "lib-grid";
       for (const id of Object.keys(SYMBOLS)) {
-        if (SYMBOLS[id].cat !== cat) continue;
-        const item = document.createElement("button");
-        item.className = "lib-item";
-        item.dataset.sym = id;
-        item.title = SYMBOLS[id].code ? SYMBOLS[id].code : "";
-        const c = document.createElement("canvas");
-        c.width = 56; c.height = 56;
-        drawPreview(c, id);
-        const lbl = document.createElement("span");
-        lbl.textContent = SYMBOLS[id].name;
-        item.appendChild(c);
-        item.appendChild(lbl);
-        item.addEventListener("click", () => armSymbol(id, item));
-        grid.appendChild(item);
+        const sym = SYMBOLS[id];
+        if (!group.cats.includes(sym.cat) || seen.has(id)) continue;
+        seen.add(id);
+        const item = createLibItem(id);
+        if (item) grid.appendChild(item);
       }
-      sec.appendChild(grid);
-      ui.libBody.appendChild(sec);
+      if (grid.children.length) {
+        sec.appendChild(grid);
+        ui.libBody.appendChild(sec);
+      }
     }
   }
   function drawPreview(c, id) {
@@ -3948,19 +4709,24 @@
     const w = c.width;
     const h = c.height;
     g.clearRect(0, 0, w, h);
-    g.fillStyle = "#ffffff";
+    const grad = g.createLinearGradient(0, 0, w, h);
+    grad.addColorStop(0, "rgba(12, 16, 24, 0.95)");
+    grad.addColorStop(1, "rgba(8, 11, 16, 0.98)");
+    g.fillStyle = grad;
     g.fillRect(0, 0, w, h);
-    g.strokeStyle = "#d8dee8";
+    g.strokeStyle = "rgba(255, 176, 32, 0.25)";
     g.lineWidth = 1;
     g.strokeRect(0.5, 0.5, w - 1, h - 1);
     g.save();
     g.translate(w / 2, h / 2);
     g.scale(1.08, 1.08);
-    g.strokeStyle = "#111";
-    g.fillStyle = "#111";
-    g.lineWidth = 2.2;
+    g.strokeStyle = "#ffb020";
+    g.fillStyle = "#ffb020";
+    g.lineWidth = 2;
     g.lineCap = "round";
     g.lineJoin = "round";
+    g.shadowColor = "rgba(255, 176, 32, 0.45)";
+    g.shadowBlur = 6;
     const def = SYMBOLS[id];
     if (!def) { g.restore(); return; }
     if (PanelDraw.drawBranchBody) {
@@ -3971,25 +4737,19 @@
     g.restore();
   }
   function armSymbol(id, item) {
-    if (branchPlaceSlot) {
-      placeSymbolOnSlot(id, branchPlaceSlot, branchPlaceChainIdx);
-      branchPlaceSlot = null;
-      branchPlaceChainIdx = 0;
-      ui.libHint.textContent = "בחר סמל ואז הקש על הגיליון להנחה";
-      highlightLibItem(null);
-      return;
-    }
-    if (symEditEl) {
-      replaceSelectedSymbol(id);
-      return;
-    }
     placeSym = id;
     tool = "place";
     document.querySelectorAll(".lib-item").forEach((x) => x.classList.remove("is-active"));
     if (item) item.classList.add("is-active");
     setActiveTool(null);
-    ui.libHint.textContent = `מניח: ${SYMBOLS[id].name} — הקש על הגיליון`;
+    if (ui.library) {
+      ui.library.classList.add("hidden");
+      ui.library.classList.remove("library--picker");
+      syncLibraryBackdrop();
+    }
+    ui.libHint.textContent = `מניח: ${SYMBOLS[id].name} — הקש על מודול ריק`;
     canvas.style.cursor = "copy";
+    toast(`הקש על מודול ריק · ${SYMBOLS[id].name}`);
   }
   function disarm() {
     placeSym = null;
@@ -4061,38 +4821,23 @@
   function renderModuleDashboard() {
     const built = !!state.meta.skeletonBuilt;
     document.body.classList.toggle("has-board", built);
-    if (!built) {
-      if (ui.moduleCountUsed) ui.moduleCountUsed.textContent = "0";
-      if (ui.moduleCountTotal) ui.moduleCountTotal.textContent = String(currentBoard().modules);
-      return;
-    }
-
-    const cap = layoutBranchTotal();
-    const occupied = countOccupiedBranches();
-    const dinUsed = countUsedModules();
-    const over = occupied > cap || dinUsed > cap;
-
-    if (ui.moduleCountUsed) ui.moduleCountUsed.textContent = String(occupied);
-    if (ui.moduleCountTotal) ui.moduleCountTotal.textContent = String(cap);
-    if (ui.sheetTitleLabel) {
-      const title = state.meta.title || state.meta.file || "לוח ראשי";
-      ui.sheetTitleLabel.textContent = title + " - " + cap + " מודולים";
-    }
     const vipBar = document.getElementById("vipTopBar");
-    if (vipBar) vipBar.classList.toggle("is-over", over);
+    if (vipBar && built) {
+      const cap = layoutBranchTotal();
+      const over = countOccupiedBranches() > cap || countUsedModules() > cap;
+      vipBar.classList.toggle("is-over", over);
+    } else if (vipBar) {
+      vipBar.classList.remove("is-over");
+    }
   }
 
   function syncUI() {
     ui.emptyHint.classList.toggle("hidden", state.elements.length > 0 || !ui.library.classList.contains("hidden") || state.meta.skeletonBuilt);
-    const cap = state.meta.skeletonBuilt ? layoutBranchTotal() : currentBoard().modules;
-    const title = state.meta.title || state.meta.file || "לוח חדש";
-    ui.sheetTitleLabel.textContent = state.meta.skeletonBuilt
-      ? title + " - " + cap + " מודולים"
-      : title;
+    if (ui.sheetTitleLabel) {
+      ui.sheetTitleLabel.textContent = "מקור סמלים - לוח חשמל";
+    }
     const board = currentBoard();
-    ui.boardChipLabel.textContent = board.label + (state.meta.skeletonBuilt && state.meta.rowLayout && state.meta.rowLayout.length
-      ? " · " + state.meta.rowLayout.length + " שורות"
-      : "");
+    ui.boardChipLabel.textContent = String(board.modules) + "מ";
     ui.boardChip.classList.toggle("over-limit", (() => {
       const cap = moduleCapacity();
       if (state.meta.skeletonBuilt) {
@@ -4111,7 +4856,8 @@
   }
   function modalOpen() {
     return !ui.sheetModal.classList.contains("hidden") ||
-      document.body.classList.contains("terms-pending");
+      document.body.classList.contains("terms-pending") ||
+      document.body.classList.contains("sym-edit-open");
   }
 
   function populateBoardSelect() {
@@ -4253,6 +4999,51 @@
     });
   }
 
+  function wireFloatingPopups() {
+    const stop = (e) => e.stopPropagation();
+    const panels = [
+      ui.branchPopup,
+      ui.terminalPopup,
+      ui.wirePopup,
+      ui.feedPopup,
+      ui.symEditPanel,
+      document.getElementById("radialMenu"),
+    ];
+    for (const el of panels) {
+      if (!el) continue;
+      el.addEventListener("pointerdown", stop);
+      el.addEventListener("mousedown", stop);
+      el.addEventListener("touchstart", stop, { passive: true });
+    }
+  }
+
+  function wireLibraryPanel() {
+    if (!ui.library) return;
+    ui.library.addEventListener("pointerdown", (e) => e.stopPropagation());
+    ui.library.addEventListener("mousedown", (e) => e.stopPropagation());
+    ui.libBody?.addEventListener("pointerdown", (e) => e.stopPropagation());
+    ui.libBody?.addEventListener("click", (e) => {
+      const item = e.target.closest(".lib-item");
+      if (!item || !item.dataset.sym) return;
+      e.preventDefault();
+      e.stopPropagation();
+      pickSymbolFromLibrary(item.dataset.sym, item);
+    });
+    ui.libBody?.addEventListener("touchend", (e) => {
+      const item = e.target.closest(".lib-item");
+      if (!item || !item.dataset.sym) return;
+      e.preventDefault();
+      e.stopPropagation();
+      pickSymbolFromLibrary(item.dataset.sym, item);
+    }, { passive: false });
+    ui.libBody?.addEventListener("wheel", (e) => e.stopPropagation(), { passive: true });
+    ui.libBody?.addEventListener("touchmove", (e) => e.stopPropagation(), { passive: true });
+    ui.libClose?.addEventListener("click", () => {
+      hideLibrary();
+      closeSymEdit();
+    });
+  }
+
   function wireUI() {
     if (ui.startAppBtn && ui.splashScreen) {
       ui.startAppBtn.addEventListener("click", () => {
@@ -4274,18 +5065,20 @@
       fitViewToDrawing();
       toast("תצוגה ממורכזת");
     });
-    ui.delBtn.addEventListener("click", deleteSelected);
+    ui.delBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSelected();
+    });
     ui.undo.addEventListener("click", undo);
     ui.redo.addEventListener("click", redo);
     ui.exportBtn.addEventListener("click", exportPNG);
     ui.exportPdfBtn?.addEventListener("click", exportPDF);
     ui.printBtn.addEventListener("click", printSheet);
 
-    ui.libToggle?.addEventListener("click", () => { ui.library.classList.toggle("hidden"); syncUI(); });
-    ui.libClose.addEventListener("click", () => {
-      hideLibrary();
-      closeSymEdit();
-    });
+    ui.libOpenBtn?.addEventListener("click", toggleLibrary);
+    wireLibraryPanel();
+    wireFloatingPopups();
+    ui.libToggle?.addEventListener("click", toggleLibrary);
     ui.emptyHint.addEventListener("click", openSheetModal);
     ui.boardChip.addEventListener("click", openSheetModal);
 
@@ -4332,6 +5125,7 @@
 
     ui.symEditApply.addEventListener("click", applySymEdit);
     ui.symEditClose.addEventListener("click", closeSymEdit);
+    ui.symEditBackdrop?.addEventListener("click", closeSymEdit);
     ui.symEditDelete.addEventListener("click", deleteSymEdit);
     ui.sym_rating.addEventListener("change", refreshCrossSectionFields);
     ui.sym_material.addEventListener("change", refreshCrossSectionFields);
@@ -4360,28 +5154,59 @@
     }
     if (ui.branchDeleteBtn) {
       ui.branchDeleteBtn.addEventListener("click", (e) => {
+        e.preventDefault();
         e.stopPropagation();
-        if (selectedBranchKey) removeBranch(selectedBranchKey);
+        const key = branchPopupSlotKey();
+        if (!key) {
+          toast("מודול לא נבחר — לחץ שוב על הקו הכחול");
+          return;
+        }
+        if (!canDeleteModule(key)) {
+          toast("לא ניתן למחוק — חייב להישאר לפחות מודול אחד בשורה");
+          return;
+        }
+        removeBranch(key, { skipConfirm: true });
       });
     }
     if (ui.branchAddBtn) {
       ui.branchAddBtn.addEventListener("click", (e) => {
+        e.preventDefault();
         e.stopPropagation();
-        if (!selectedBranchKey) return;
-        if (modulePopupChainMode) openBranchForChain(selectedBranchKey);
-        else openBranchForSymbols(selectedBranchKey, 0);
+        openSymbolPickerFromBranchPopup();
+      });
+    }
+    if (ui.branchEditBtn) {
+      ui.branchEditBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const key = branchPopupSlotKey();
+        if (!key) return;
+        const syms = symsOnSlot(key);
+        if (!syms.length) return;
+        const el = branchPopupEditSymId
+          ? state.elements.find((x) => x.id === branchPopupEditSymId)
+          : syms[0];
+        if (el) openSymEdit(el, false);
       });
     }
     if (ui.branchChainBtn) {
       ui.branchChainBtn.addEventListener("click", (e) => {
+        e.preventDefault();
         e.stopPropagation();
-        if (selectedBranchKey) openBranchForChain(selectedBranchKey);
+        const key = branchPopupSlotKey();
+        if (key) openBranchForChain(key);
       });
     }
     if (ui.branchClearSymBtn) {
       ui.branchClearSymBtn.addEventListener("click", (e) => {
+        e.preventDefault();
         e.stopPropagation();
-        if (selectedBranchKey) clearBranchSymbols(selectedBranchKey);
+        const key = branchPopupSlotKey();
+        if (!key) {
+          toast("מודול לא נבחר — לחץ שוב על הקו הכחול");
+          return;
+        }
+        clearBranchSymbols(key, { skipConfirm: true });
       });
     }
     if (ui.terminalAddBtn) {
@@ -4402,8 +5227,9 @@
     }
     if (ui.branchWireCross) {
       ui.branchWireCross.addEventListener("change", () => {
-        if (selectedBranchKey) {
-          setWireCross(wireSkForBranch(selectedBranchKey), ui.branchWireCross.value, true);
+        const key = branchPopupSlotKey();
+        if (key) {
+          setWireCross(wireSkForBranch(key), ui.branchWireCross.value, true);
         }
       });
     }
@@ -4528,6 +5354,7 @@
 
   function init() {
     buildLibrary();
+    buildBranchPopupPicker();
     wireUI();
     wireTermsGate();
     if (!isTermsAccepted()) {

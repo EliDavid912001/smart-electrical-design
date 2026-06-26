@@ -6,6 +6,21 @@
 
   function L(g, a, b, c, d) { g.beginPath(); g.moveTo(a, b); g.lineTo(c, d); g.stroke(); }
   function R(g, x, y, w, h) { g.beginPath(); g.rect(x, y, w, h); g.stroke(); }
+  function RR(g, x, y, w, h, r) {
+    r = Math.min(r || 2.5, w / 2, h / 2);
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.lineTo(x + w - r, y);
+    g.quadraticCurveTo(x + w, y, x + w, y + r);
+    g.lineTo(x + w, y + h - r);
+    g.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    g.lineTo(x + r, y + h);
+    g.quadraticCurveTo(x, y + h, x, y + h - r);
+    g.lineTo(x, y + r);
+    g.quadraticCurveTo(x, y, x + r, y);
+    g.closePath();
+    g.stroke();
+  }
   function CIR(g, x, y, r) { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.stroke(); }
   function ARC(g, x, y, r, a0, a1) { g.beginPath(); g.arc(x, y, r, a0, a1); g.stroke(); }
   function XX(g, x, y, r) { L(g, x - r, y - r, x + r, y + r); L(g, x - r, y + r, x + r, y - r); }
@@ -52,7 +67,7 @@
     const { xs, w } = mcbPoleXs(poles);
     for (const x of xs) XX(g, x, MCB.connMark, 3);
     mcbPhaseSlashes(g, xs);
-    R(g, -w / 2, MCB.boxTop, w, MCB.boxH);
+    RR(g, -w / 2, MCB.boxTop, w, MCB.boxH, 2.5);
     mcbTripUnit(g, w);
   }
 
@@ -81,7 +96,7 @@
   }
 
   global.PanelDraw = {
-    L, R, CIR, ARC, XX, TT, lead, leads,
+    L, R, RR, CIR, ARC, XX, TT, lead, leads,
     mcbPoles, mcbPolesOnBus, drawBranchBody, mcbBody,
   };
 })(typeof window !== "undefined" ? window : globalThis);
