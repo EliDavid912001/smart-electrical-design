@@ -672,8 +672,9 @@
   function openInlineSymbolPicker(slotKey, chainIdx, hint) {
     ensureBranchPopupVisible(slotKey);
     selectedBranchKey = slotKey;
+    hideLibrary({ keepPending: true });
+    clearPendingPlace();
     setPendingPlace(slotKey, chainIdx);
-    hideLibrary();
     hideTerminalPopup();
     closeSymEdit();
     toggleBranchPopupPicker(true);
@@ -777,6 +778,10 @@
     pendingPlaceSlot = null;
     branchPlaceSlot = null;
     branchPlaceChainIdx = 0;
+    if (ui.branchPopup) {
+      delete ui.branchPopup.dataset.pendingSlotKey;
+      delete ui.branchPopup.dataset.pendingChainIdx;
+    }
   }
 
   function setPendingPlace(slotKey, chainIdx) {
@@ -784,20 +789,36 @@
     pendingPlaceSlot = { slotKey, chainIdx: idx };
     branchPlaceSlot = slotKey;
     branchPlaceChainIdx = idx;
+    if (ui.branchPopup) {
+      ui.branchPopup.dataset.pendingSlotKey = slotKey;
+      ui.branchPopup.dataset.pendingChainIdx = String(idx);
+    }
   }
 
   function resolvePlaceTarget() {
     if (pendingPlaceSlot && pendingPlaceSlot.slotKey) return pendingPlaceSlot;
     if (branchPlaceSlot) return { slotKey: branchPlaceSlot, chainIdx: branchPlaceChainIdx || 0 };
-    if (selectedBranchKey) return { slotKey: selectedBranchKey, chainIdx: 0 };
+    if (ui.branchPopup && ui.branchPopup.dataset.pendingSlotKey) {
+      return {
+        slotKey: ui.branchPopup.dataset.pendingSlotKey,
+        chainIdx: Number(ui.branchPopup.dataset.pendingChainIdx) || 0,
+      };
+    }
+    if (selectedBranchKey) {
+      const syms = symsOnSlot(selectedBranchKey);
+      return {
+        slotKey: selectedBranchKey,
+        chainIdx: syms.length > 0 && branchPickMode !== "replace" ? syms.length : 0,
+      };
+    }
     return null;
   }
 
-  function hideLibrary() {
+  function hideLibrary(opts) {
     if (!ui.library) return;
     ui.library.classList.add("hidden");
     ui.library.classList.remove("library--picker");
-    clearPendingPlace();
+    if (!(opts && opts.keepPending)) clearPendingPlace();
     syncLibraryBackdrop();
     syncUI();
   }
@@ -883,7 +904,6 @@
       else pickSymbolFromLibrary(id, item);
     };
     item.addEventListener("click", pick);
-    item.addEventListener("touchend", pick, { passive: false });
     return item;
   }
 
@@ -957,12 +977,15 @@
           syms.length + " סמלים בשרשרת · «ערוך» · «הוסף לשרשרת» · «החלף»";
       } else {
         ui.branchPopupHint.innerHTML =
-          "«ערוך רכיב» · «הוסף סמל לשרשרת» · «החלף סמל»" +
+          "«הוסף סמל נוסף» — יתווסף מתחת · «ערוך רכיב»" +
           (deletable ? " · «מחק מודול»" : "");
       }
     }
     if (ui.branchAddBtn) {
-      ui.branchAddBtn.textContent = sym ? "החלף סמל" : "בחר סמל מהרשימה";
+      ui.branchAddBtn.textContent = sym
+        ? (syms.length >= MAX_CHAIN ? "שרשרת מלאה" : "הוסף סמל נוסף")
+        : "בחר סמל מהרשימה";
+      ui.branchAddBtn.disabled = sym && syms.length >= MAX_CHAIN;
     }
     if (ui.branchEditBtn) {
       ui.branchEditBtn.classList.toggle("hidden", !syms.length);
@@ -1029,18 +1052,17 @@
       toggleBranchPopupPicker(false);
       return;
     }
-    if (modulePopupChainMode || branchPickMode === "chain") {
-      if (syms.length >= MAX_CHAIN) {
-        toast("עד " + MAX_CHAIN + " סמלים בשרשרת");
-        return;
-      }
-      branchPickMode = "chain";
-      openInlineSymbolPicker(key, syms.length, "בחר סמל — יתווסף לשרשרת");
+    if (syms.length >= MAX_CHAIN) {
+      toast("עד " + MAX_CHAIN + " סמלים בשרשרת");
       return;
     }
-    branchPickMode = syms.length ? "replace" : "new";
-    const hint = syms.length ? "בחר סמל — יחליף את הקיים" : "גלול ובחר סמל מהרשימה";
-    openInlineSymbolPicker(key, 0, hint);
+    if (syms.length) {
+      branchPickMode = "chain";
+      openInlineSymbolPicker(key, syms.length, "בחר סמל — יתווסף מתחת בשרשרת");
+      return;
+    }
+    branchPickMode = "new";
+    openInlineSymbolPicker(key, 0, "גלול ובחר סמל מהרשימה");
   }
 
   function openBranchForSymbols(slotKey, chainIdx) {
@@ -1051,11 +1073,11 @@
     }
     const idx = chainIdx != null ? chainIdx : 0;
     const syms = symsOnSlot(slotKey);
-    branchPickMode = idx > 0 ? "chain" : (syms.length ? "replace" : "new");
+    branchPickMode = idx > 0 || syms.length ? "chain" : "new";
     openInlineSymbolPicker(
       slotKey,
-      idx,
-      idx > 0 ? "בחר סמל — יתווסף לשרשרת" : "בחר סמל — יתווסף למודול"
+      syms.length ? syms.length : idx,
+      syms.length ? "בחר סמל — יתווסף מתחת בשרשרת" : "בחר סמל — יתווסף למודול"
     );
   }
 
@@ -1070,9 +1092,10 @@
       return;
     }
     const syms = symsOnSlot(slotKey);
-    const idx = chainIdx != null ? chainIdx : 0;
+    const mode = (opts && opts.mode) || branchPickMode;
+    let idx = chainIdx != null ? chainIdx : 0;
 
-    if (idx === 0 && syms.length > 0 && opts && opts.fromLibrary) {
+    if (syms.length > 0 && opts && opts.fromLibrary && mode === "replace") {
       const el = syms[0];
       const def = SYMBOLS[symId];
       commit(() => {
@@ -1094,16 +1117,22 @@
       state.selectedId = el.id;
       checkModuleOverflow(true);
       hideLibrary();
+      hideBranchPopup();
+      branchPickMode = "new";
       openSymEdit(el, false);
       toast("סמל הוחלף: " + (def ? def.name : symId));
       return;
+    }
+
+    if (syms.length > 0 && opts && opts.fromLibrary && mode !== "replace") {
+      idx = syms.length;
     }
 
     if (idx === 0 && syms.length > 0 && !(opts && opts.fromLibrary)) {
       openSymEdit(syms[0]);
       return;
     }
-    if (idx > 0 && idx !== syms.length) {
+    if (syms.length > 0 && idx !== syms.length) {
       toast("לא ניתן להוסיף כאן");
       return;
     }
@@ -1149,7 +1178,7 @@
     openSymEdit(el, false);
     render();
     syncUI();
-    toast("נוסף: " + SYMBOLS[symId].name);
+    toast(idx > 0 ? "נוסף לשרשרת: " + SYMBOLS[symId].name : "נוסף: " + SYMBOLS[symId].name);
   }
 
   let lastLibPickAt = 0;
@@ -1163,12 +1192,25 @@
       toast("סמל לא נמצא");
       return;
     }
+
     const target = resolvePlaceTarget();
-    if (target) {
-      placeSymbolOnSlot(symId, target.slotKey, target.chainIdx, { fromLibrary: true });
+    if (target && target.slotKey) {
+      const syms = symsOnSlot(target.slotKey);
+      let idx = target.chainIdx != null ? target.chainIdx : 0;
+      let mode = branchPickMode;
+      if (syms.length > 0 && mode !== "replace") {
+        mode = "chain";
+        idx = syms.length;
+      }
+      symEditEl = null;
+      placeSymbolOnSlot(symId, target.slotKey, idx, {
+        fromLibrary: true,
+        mode,
+      });
       highlightLibItem(symId);
       return;
     }
+
     if (symEditEl) {
       replaceSelectedSymbol(symId);
       if (item) highlightLibItem(symId);
